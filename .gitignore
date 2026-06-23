@@ -1,0 +1,12 @@
+.env
+data/
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+
+# Internal build/process notes — kept locally, not published
+docs/learning-plan.md
+docs/tasks.md
+docs/coding-standards.md
