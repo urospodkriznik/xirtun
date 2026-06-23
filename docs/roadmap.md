@@ -63,6 +63,31 @@ that guides diet change.
 - **Metric-based targets:** use age / sex / height / weight / activity to compute
   calorie and protein targets instead of reasoning about them qualitatively.
 
+### Deployment & CI/CD (planned — build once it's in daily use)
+Goal: push to `main` → tests run → the VM updates and the service restarts. Mirrors
+the SSH-deploy pattern used in the author's other repos (openclaw, myapp-devops);
+crib the exact workflow from there when implementing.
+
+**CI** (every push / PR):
+- GitHub Actions: checkout → install `uv` → `uv sync` → `uv run ruff check` →
+  `uv run pytest`. (Fully offline — no API keys needed, since tests use fakes.)
+
+**CD** (on push to `main`, after CI passes):
+- SSH into the VM and run a deploy script:
+  `git pull --ff-only` → `uv sync` → `sudo systemctl restart xirtun`.
+- Secrets in repo settings: `SSH_HOST`, `SSH_USER`, `SSH_KEY` (deploy key),
+  optional `SSH_PORT`. Use e.g. `appleboy/ssh-action`.
+- VM prerequisites (from Slice 9): a repo checkout, the `xirtun` systemd unit, and a
+  deploy user with `NOPASSWD` sudo scoped to `systemctl restart xirtun`.
+
+**Decisions to make then:**
+- Push-based SSH (lighter) vs a self-hosted runner on the VM (one more process to
+  maintain). Lean SSH for one small VM.
+- Schema changes: today it's `CREATE TABLE IF NOT EXISTS` only; anything beyond
+  additive needs a real migration step in the deploy.
+- `.env` lives only on the VM and is never touched by CD. A brief restart is fine
+  (single user, no zero-downtime requirement).
+
 ### Platform & ops
 - **Webhook transport** (if real-time or scale ever matters).
 - **Live multi-provider switching** / fallback between LLM providers.

@@ -69,6 +69,7 @@ def get_connection(db_path: Path) -> sqlite3.Connection:
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row              # rows act like dicts: row["name"]
     conn.execute("PRAGMA foreign_keys = ON")    # enforce the REFERENCES above
+    conn.execute("PRAGMA journal_mode = WAL")   # better read/write concurrency across connections
     return conn
 
 

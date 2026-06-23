@@ -3,8 +3,9 @@
 Run:  uv run python -m xirtun.main
 Needs TELEGRAM_TOKEN, TELEGRAM_CHAT_ID, GEMINI_API_KEY (+ optional TIMEZONE) in .env.
 
-On first run (empty diet.md) the bot interviews the user; afterwards every message
-goes through the intake pipeline.
+Starts the weekly-review scheduler, runs a catch-up review if one is overdue, then
+serves the Telegram bot. On first run (empty diet.md) the bot interviews the user;
+afterwards every message goes through the intake pipeline.
 """
 
 from __future__ import annotations
@@ -13,15 +14,19 @@ import logging
 import sqlite3
 from collections.abc import Callable
 from datetime import datetime, tzinfo
+from functools import partial
 from pathlib import Path
 
 from xirtun.config import load_config
 from xirtun.llm.base import LLMClient
 from xirtun.llm.gemini import GeminiClient
 from xirtun.logging_setup import setup_logging
+from xirtun.memory import diet as memory
 from xirtun.messaging.base import IncomingMessage, Messenger
 from xirtun.messaging.telegram import TelegramMessenger
 from xirtun.pipeline.intake import dispatch
+from xirtun.run_weekly import run_scheduled_review
+from xirtun.scheduler import start_scheduler
 from xirtun.storage import db
 
 logger = logging.getLogger(__name__)
@@ -33,6 +38,7 @@ def make_intake_handler(
     messenger: Messenger,
     diet_path: Path,
     tz: tzinfo,
+    weekly_cb: Callable[[], None],
 ) -> Callable[[IncomingMessage], None]:
     def handle(message: IncomingMessage) -> None:
         logger.info("recv from %s: %s", message.sender_id, message.text)
@@ -43,6 +49,7 @@ def make_intake_handler(
             conn=conn,
             messenger=messenger,
             diet_path=diet_path,
+            weekly_cb=weekly_cb,
             now=datetime.now(tz),
         )
 
@@ -64,7 +71,14 @@ def main() -> None:
         chat_id=config.telegram_chat_id,
         conn=conn,
     )
-    messenger.run(make_intake_handler(llm, conn, messenger, diet_path, config.timezone))
+
+    start_scheduler(config)
+    # Catch up a missed weekly review (but not before the user has onboarded).
+    if not memory.is_empty(diet_path):
+        run_scheduled_review(config, force=False)
+
+    weekly_cb = partial(run_scheduled_review, config, force=True)
+    messenger.run(make_intake_handler(llm, conn, messenger, diet_path, config.timezone, weekly_cb))
 
 
 if __name__ == "__main__":

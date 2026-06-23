@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import logging
 import sqlite3
+from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -24,11 +25,25 @@ from xirtun.pipeline.classify import classify
 from xirtun.pipeline.onboarding import onboarding_step
 from xirtun.pipeline.structure import structure_meal
 from xirtun.pipeline.symptom import structure_symptom
+from xirtun import reports
 from xirtun.storage import admin, diary
 
 logger = logging.getLogger(__name__)
 
 MEAL_COMMANDS = {"/meal", "/new"}
+
+HELP_TEXT = (
+    "Just tell me what you ate or how you feel, in plain language, and I'll log it. "
+    "You can also share goals or notes (e.g. 'I want to gain muscle').\n\n"
+    "Commands:\n"
+    "/meal — start a new meal entry\n"
+    "/undo — remove your last entry\n"
+    "/today — today's meals and totals\n"
+    "/week — the past 7 days\n"
+    "/profile — show your profile\n"
+    "/weekly — run your weekly review now\n"
+    "/clear-data — erase everything (asks to confirm)"
+)
 
 
 def format_ack(meals: list[dict[str, Any]]) -> str:
@@ -70,6 +85,25 @@ def handle_message(
     if text in MEAL_COMMANDS:
         sessions.upsert(conn, chat_id, "meal", "", now=now)
         messenger.send("New meal — tell me what you ate.")
+        return
+
+    if text == "/undo":
+        deleted = diary.delete_last(conn)
+        messenger.send(f"Removed your last entry ({deleted})." if deleted else "Nothing to undo.")
+        return
+
+    if text == "/help":
+        messenger.send(HELP_TEXT)
+        return
+    if text == "/profile":
+        profile = memory.read_diet(diet_path) if diet_path else ""
+        messenger.send(profile or "No profile yet — just start logging and I'll build one.")
+        return
+    if text == "/today":
+        messenger.send(reports.today_report(conn, now or datetime.now().astimezone()))
+        return
+    if text == "/week":
+        messenger.send(reports.week_report(conn, now or datetime.now().astimezone()))
         return
 
     # 2) Mid-session: continue whatever we were collecting (meal or symptom).
@@ -161,6 +195,7 @@ def dispatch(
     conn: sqlite3.Connection,
     messenger: Messenger,
     diet_path: Path,
+    weekly_cb: Callable[[], None] | None = None,
     now: datetime | None = None,
 ) -> None:
     """Top-level entry: run the first-run interview while diet.md is empty,
@@ -175,6 +210,10 @@ def dispatch(
     if command == "/clear-data confirm":
         admin.reset_all(conn, diet_path.parent)
         messenger.send("All data cleared. Send me anything to start fresh.")
+        return
+    if command == "/weekly" and weekly_cb is not None:
+        messenger.send("Running your weekly review now…")
+        weekly_cb()
         return
 
     if memory.is_empty(diet_path):

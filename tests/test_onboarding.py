@@ -56,3 +56,18 @@ def test_clear_data_confirm_wipes(conn, tmp_path):
     dispatch("/clear-data confirm", chat_id="c1", llm=FakeLLM(), conn=conn, messenger=messenger, diet_path=diet)
 
     assert not diet.exists()
+
+
+def test_weekly_command_invokes_callback(conn, tmp_path):
+    diet = tmp_path / "diet.md"
+    diet.write_text("# Profile")
+    messenger = FakeMessenger()
+    called = []
+
+    dispatch(
+        "/weekly", chat_id="c1", llm=FakeLLM(), conn=conn, messenger=messenger,
+        diet_path=diet, weekly_cb=lambda: called.append(True),
+    )
+
+    assert called == [True]
+    assert messenger.sent  # acknowledged before running

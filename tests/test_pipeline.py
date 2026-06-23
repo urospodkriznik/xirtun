@@ -4,6 +4,7 @@ Meals and symptoms share the same shape; the symptom tests mirror the meal ones.
 """
 
 import json
+from datetime import datetime, timezone
 
 from xirtun.llm.base import LLMResponse
 from xirtun.llm.fake import FakeLLM
@@ -157,6 +158,54 @@ def test_handle_message_note_appended_to_diet(conn, tmp_path):
 
     assert "gain muscle" in diet.read_text()
     assert messenger.sent
+
+
+def test_delete_last_removes_most_recent(conn):
+    t1 = datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc)
+    t2 = datetime(2026, 1, 1, 13, 0, tzinfo=timezone.utc)
+    diary.save_meal(conn, "banana", _meal([{"name": "banana"}]), now=t1)
+    diary.save_symptom(conn, "bloated", _symptom("bloating"), now=t2)
+
+    assert diary.delete_last(conn).startswith("symptom")   # symptom was newer
+    assert conn.execute("SELECT COUNT(*) AS n FROM symptoms").fetchone()["n"] == 0
+    assert diary.delete_last(conn).startswith("meal")      # meal now newest
+    assert conn.execute("SELECT COUNT(*) AS n FROM meals").fetchone()["n"] == 0
+    assert diary.delete_last(conn) is None                 # nothing left
+
+
+def test_handle_message_undo(conn):
+    diary.save_meal(conn, "banana", _meal([{"name": "banana"}]))
+    messenger = FakeMessenger()
+
+    handle_message("/undo", chat_id="c1", llm=FakeLLM(), conn=conn, messenger=messenger)
+
+    assert conn.execute("SELECT COUNT(*) AS n FROM meals").fetchone()["n"] == 0
+    assert "Removed" in messenger.sent[-1]
+
+
+def test_handle_message_help(conn):
+    messenger = FakeMessenger()
+    handle_message("/help", chat_id="c1", llm=FakeLLM(), conn=conn, messenger=messenger)
+    assert "/undo" in messenger.sent[-1]
+
+
+def test_handle_message_profile(conn, tmp_path):
+    diet = tmp_path / "diet.md"
+    diet.write_text("# Profile\n- vegan")
+    messenger = FakeMessenger()
+    handle_message("/profile", chat_id="c1", llm=FakeLLM(), conn=conn, messenger=messenger, diet_path=diet)
+    assert "vegan" in messenger.sent[-1]
+
+
+def test_handle_message_today(conn):
+    now = datetime(2026, 6, 23, 20, 0, tzinfo=timezone.utc)
+    diary.save_meal(
+        conn, "lunch",
+        _meal([{"name": "banana", "calories": 100}], occurred_at=now.replace(hour=12).isoformat()),
+    )
+    messenger = FakeMessenger()
+    handle_message("/today", chat_id="c1", llm=FakeLLM(), conn=conn, messenger=messenger, now=now)
+    assert "banana" in messenger.sent[-1]
 
 
 def test_handle_message_other(conn):
