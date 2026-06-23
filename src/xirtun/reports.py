@@ -46,8 +46,14 @@ def week_report(conn: sqlite3.Connection, now: datetime) -> str:
         return "Nothing logged in the past 7 days."
 
     t = _totals(meals)
+    # Average over days that actually have entries (the date part of occurred_at),
+    # not a flat 7 — otherwise sparse logging looks misleadingly low.
+    days_logged = len({meal["occurred_at"][:10] for meal in meals}) or 1
     return (
-        f"Past 7 days — {len(meals)} meals, ~{round(t['calories'])} kcal total "
-        f"(~{round(t['calories'] / 7)}/day), {round(t['protein_g'])}g protein total "
-        f"(~{round(t['protein_g'] / 7)}/day). Symptoms logged: {len(symptoms)}."
+        f"Past 7 days — {len(meals)} meals across {days_logged} day(s), "
+        f"~{round(t['calories'])} kcal total "
+        f"(~{round(t['calories'] / days_logged)}/day on logged days), "
+        f"{round(t['protein_g'])}g protein total "
+        f"(~{round(t['protein_g'] / days_logged)}/day). "
+        f"Symptoms logged: {len(symptoms)}."
     )

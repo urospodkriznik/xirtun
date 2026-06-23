@@ -13,6 +13,7 @@ CLASSIFY_SYSTEM = (
     "- 'note': they are sharing a goal, preference, routine, exercise habit, or a "
     "fact/idea to remember (e.g. 'I want to gain muscle', 'I exercise twice a week', "
     "'I want more lutein in my diet').\n"
+    "- 'shopping': they are asking what to buy or for help planning groceries.\n"
     "- 'other': anything else (questions, chit-chat).\n"
     "Respond using the provided schema."
 )

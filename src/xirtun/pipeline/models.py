@@ -17,7 +17,7 @@ from pydantic import BaseModel, Field
 
 class Intent(BaseModel):
     # Literal[...] limits the value to exactly these strings.
-    intent: Literal["meal", "symptom", "note", "other"]
+    intent: Literal["meal", "symptom", "note", "shopping", "other"]
 
 
 class Item(BaseModel):
@@ -70,12 +70,24 @@ class SymptomExtraction(BaseModel):
     symptoms: list[SymptomEntry] = Field(default_factory=list)
 
 
+class Metrics(BaseModel):
+    """Structured body metrics used to compute calorie/protein targets."""
+
+    sex: Literal["male", "female", "other"] | None = None
+    birth_year: int | None = None
+    birth_month: int | None = None     # optional (1-12); refines the computed age
+    height_cm: float | None = None
+    weight_kg: float | None = None
+    activity: Literal["sedentary", "light", "moderate", "active", "very_active"] | None = None
+
+
 class OnboardingStep(BaseModel):
     """One step of the first-run interview: ask another question, or finish."""
 
     done: bool
     question: str | None = None        # set while done is False
     diet_markdown: str | None = None   # the finished profile, set when done is True
+    metrics: Metrics | None = None     # structured body metrics, filled when done
 
 
 class AgentAction(BaseModel):

@@ -16,6 +16,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Callable
 
+from xirtun import targets
 from xirtun.memory import diet as diet_memory
 from xirtun.memory import observations
 from xirtun.storage import diary
@@ -36,6 +37,7 @@ TOOLS_DOC = (
     "- read_observations() -> your own prior notes (observations.md)\n"
     "- write_observations(content:str) -> replace your notes with an updated, concise summary\n"
     "- update_diet(content:str) -> replace the profile (read it first; merge, never drop facts)\n"
+    "- get_targets() -> the user's computed daily calorie & protein targets\n"
 )
 
 
@@ -92,4 +94,5 @@ def build_dispatch(ctx: ToolContext) -> dict[str, Callable[[dict[str, Any]], str
         "read_observations": lambda a: observations.read(ctx.observations_path) or "(empty)",
         "write_observations": lambda a: _write_observations(ctx, a),
         "update_diet": lambda a: _update_diet(ctx, a),
+        "get_targets": lambda a: targets.format_targets(targets.read_metrics(ctx.conn)),
     }

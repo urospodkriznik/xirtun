@@ -26,6 +26,23 @@ def test_onboarding_asks_then_writes_diet(conn, tmp_path):
     assert "Profile" in diet_path.read_text()
 
 
+def test_onboarding_stores_metrics(conn, tmp_path):
+    from xirtun import targets
+    diet = tmp_path / "diet.md"
+    llm = FakeLLM([
+        LLMResponse(data={
+            "done": True,
+            "diet_markdown": "# Profile",
+            "metrics": {"sex": "male", "birth_year": 1994, "height_cm": 180, "weight_kg": 80, "activity": "moderate"},
+        }),
+    ])
+
+    dispatch("I'm 30, male, 180cm, 80kg, moderate", chat_id="c1", llm=llm, conn=conn,
+             messenger=FakeMessenger(), diet_path=diet)
+
+    assert targets.read_metrics(conn)["weight_kg"] == 80
+
+
 def test_dispatch_skips_onboarding_when_diet_exists(conn, tmp_path):
     diet_path = tmp_path / "diet.md"
     diet_path.write_text("# Profile\n- vegan\n")

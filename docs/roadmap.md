@@ -51,17 +51,14 @@ The longer-term direction: move from a *reference* that observes to an *active c
 that guides diet change.
 - **Proactive diet coaching:** concrete daily/weekly targets and substitutions, then
   follow-ups on whether suggestions were adopted, adjusting over time.
-- **Shopping-list assistant (hot path):** ask in the moment — "I'm heading to the
-  shop, what should I add to my list?" — and get suggestions drawn from your goals,
-  recent diet, and observed gaps.
 - **Health-metric tracking:** sleep, blood pressure, weight trend, hydration — the
   weekly run requests these (it can already ask questions) and then correlates them.
 - **Two-way weekly questions:** capture answers to agent-asked questions as
   structured data linked to the relevant day/symptom, not just free-form notes.
 - **Article / evidence lookup:** let the agent search reputable sources to support a
   suggestion (e.g. nutrients for a stated goal) and cite them. (Likely v3.)
-- **Metric-based targets:** use age / sex / height / weight / activity to compute
-  calorie and protein targets instead of reasoning about them qualitatively.
+- **Goal-adjusted targets:** the deterministic maintenance target exists; refine it
+  with explicit surplus/deficit for the user's stated goal (gain/lose).
 
 ### Deployment & CI/CD (planned — build once it's in daily use)
 Goal: push to `main` → tests run → the VM updates and the service restarts. Mirrors

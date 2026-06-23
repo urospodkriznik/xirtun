@@ -208,6 +208,47 @@ def test_handle_message_today(conn):
     assert "banana" in messenger.sent[-1]
 
 
+def test_handle_message_shopping_intent(conn, tmp_path):
+    diet = tmp_path / "diet.md"
+    diet.write_text("# Profile\n- vegan")
+    llm = FakeLLM([
+        LLMResponse(data={"intent": "shopping"}),               # classify
+        LLMResponse(text="Buy: spinach, lentils, walnuts."),    # suggestion (no schema)
+    ])
+    messenger = FakeMessenger()
+
+    handle_message("what should I buy?", chat_id="c1", llm=llm, conn=conn, messenger=messenger, diet_path=diet)
+
+    assert "spinach" in messenger.sent[-1]
+
+
+def test_shop_command(conn, tmp_path):
+    diet = tmp_path / "diet.md"
+    diet.write_text("# Profile")
+    llm = FakeLLM([LLMResponse(text="Buy: oats, eggs.")])  # command -> no classify call
+    messenger = FakeMessenger()
+
+    handle_message("/shop", chat_id="c1", llm=llm, conn=conn, messenger=messenger, diet_path=diet)
+
+    assert "oats" in messenger.sent[-1]
+
+
+def test_target_command(conn):
+    from xirtun import targets
+    targets.write_metrics(conn, {"sex": "female", "birth_year": 1994, "height_cm": 165, "weight_kg": 60, "activity": "light"})
+    messenger = FakeMessenger()
+    handle_message("/target", chat_id="c1", llm=FakeLLM(), conn=conn, messenger=messenger)
+    assert "kcal" in messenger.sent[-1]
+
+
+def test_weight_command_updates_metric(conn):
+    from xirtun import targets
+    messenger = FakeMessenger()
+    handle_message("/weight 72", chat_id="c1", llm=FakeLLM(), conn=conn, messenger=messenger)
+    assert "72" in messenger.sent[-1]
+    assert targets.read_metrics(conn)["weight_kg"] == 72
+
+
 def test_handle_message_other(conn):
     llm = FakeLLM([LLMResponse(data={"intent": "other"})])
     messenger = FakeMessenger()

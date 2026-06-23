@@ -13,7 +13,7 @@ from __future__ import annotations
 import logging
 import sqlite3
 from collections.abc import Callable
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -23,9 +23,10 @@ from xirtun.memory import diet as memory
 from xirtun.pipeline import sessions
 from xirtun.pipeline.classify import classify
 from xirtun.pipeline.onboarding import onboarding_step
+from xirtun.pipeline.shopping import suggest_shopping
 from xirtun.pipeline.structure import structure_meal
 from xirtun.pipeline.symptom import structure_symptom
-from xirtun import reports
+from xirtun import reports, targets
 from xirtun.storage import admin, diary
 
 logger = logging.getLogger(__name__)
@@ -40,6 +41,9 @@ HELP_TEXT = (
     "/undo — remove your last entry\n"
     "/today — today's meals and totals\n"
     "/week — the past 7 days\n"
+    "/shop — suggest a shopping list\n"
+    "/target — your daily calorie & protein target\n"
+    "/weight <kg> — update your weight\n"
     "/profile — show your profile\n"
     "/weekly — run your weekly review now\n"
     "/clear-data — erase everything (asks to confirm)"
@@ -105,6 +109,23 @@ def handle_message(
     if text == "/week":
         messenger.send(reports.week_report(conn, now or datetime.now().astimezone()))
         return
+    if text == "/shop":
+        _process_shopping(
+            "What should I buy this week?",
+            conn=conn, diet_path=diet_path, llm=llm, messenger=messenger, now=now,
+        )
+        return
+    if text == "/target":
+        messenger.send(targets.format_targets(targets.read_metrics(conn)))
+        return
+    if text.startswith("/weight"):
+        parts = text.split()
+        try:
+            targets.update_weight(conn, float(parts[1]))
+            messenger.send(f"Updated your weight to {float(parts[1]):g} kg.")
+        except (IndexError, ValueError):
+            messenger.send("Usage: /weight 75")
+        return
 
     # 2) Mid-session: continue whatever we were collecting (meal or symptom).
     session = sessions.get_active(conn, chat_id, now=now)
@@ -125,6 +146,8 @@ def handle_message(
         _process_symptom(text, chat_id=chat_id, llm=llm, conn=conn, messenger=messenger, now=now)
     elif intent == "note" and diet_path is not None:
         _process_note(text, diet_path=diet_path, messenger=messenger, now=now)
+    elif intent == "shopping":
+        _process_shopping(text, conn=conn, diet_path=diet_path, llm=llm, messenger=messenger, now=now)
     else:
         messenger.send(
             "I'm not sure what that was — tell me what you ate, how you're feeling, "
@@ -185,6 +208,31 @@ def _process_note(
 ) -> None:
     memory.append_note(diet_path, text, now=now)
     messenger.send("Got it — noted. I'll factor that into your weekly review.")
+
+
+def _process_shopping(
+    text: str,
+    *,
+    conn: sqlite3.Connection,
+    diet_path: Path | None,
+    llm: LLMClient,
+    messenger: Messenger,
+    now: datetime | None = None,
+) -> None:
+    now = now or datetime.now().astimezone()
+    since = (now - timedelta(days=7)).isoformat()
+    profile = memory.read_diet(diet_path) if diet_path else ""
+    recent_meals = diary.meals_since(conn, since)
+    recent_symptoms = diary.symptoms_since(conn, since)
+    messenger.send(
+        suggest_shopping(
+            llm,
+            profile=profile,
+            recent_meals=recent_meals,
+            recent_symptoms=recent_symptoms,
+            request=text,
+        )
+    )
 
 
 def dispatch(
@@ -249,5 +297,7 @@ def _process_onboarding(
         messenger.send(step["question"])
     else:
         memory.write_diet(diet_path, step["diet_markdown"], now=now)
+        if step.get("metrics"):
+            targets.write_metrics(conn, step["metrics"])
         sessions.clear(conn, chat_id)
         messenger.send("Thanks — your profile is saved. You can start logging now.")
