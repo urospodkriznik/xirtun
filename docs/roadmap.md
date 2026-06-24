@@ -93,9 +93,8 @@ crib the exact workflow from there when implementing.
 - **Multi-user** (would require auth, per-user isolation — a large change).
 
 ### Tracking depth
-- **Per-session exercise/activity logging** with energy-balance math (calories
-  burned, protein needs). v1 captures exercise/goals only as profile *context*
-  via the `note` intent, which the weekly run reasons about qualitatively.
+- **Energy-balance accounting** — exercise sessions are now logged with an estimated
+  calorie burn; a future step is netting intake vs. expenditure into the targets.
 - Richer supplement tracking, mood, hydration, sleep, meal location/context.
 
 ## Explicitly parked

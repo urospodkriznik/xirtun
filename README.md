@@ -24,6 +24,9 @@ Python — the agent loop is hand-written, with **no agent framework**.
   allergens/sensitivities (dairy, gluten, soy, egg, nuts, FODMAP, …).
 - **Symptoms** — *"I've been bloated since this morning"* → a structured, timestamped
   symptom with optional severity and duration.
+- **Exercise** — *"ran 5k this morning"* or *"45 min of legs at the gym"* → a
+  structured activity with duration, intensity, distance, and an estimated calorie
+  burn (from your body weight).
 - **Clarifying questions** — if a description is too vague to estimate, it asks one
   short follow-up instead of guessing.
 - **Smart timing** — infers *when* something happened ("lunch", "this morning",

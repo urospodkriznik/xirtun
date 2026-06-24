@@ -82,6 +82,38 @@ def save_symptom(
     return symptom_id
 
 
+def save_exercise(
+    conn: sqlite3.Connection,
+    raw_text: str,
+    exercise: dict[str, Any],
+    *,
+    now: datetime | None = None,
+) -> int:
+    """Insert one exercise event. Returns the new exercise id."""
+    now = now or datetime.now().astimezone()
+    occurred_at = _parse_dt(exercise.get("occurred_at")) or now
+
+    cursor = conn.execute(
+        "INSERT INTO exercises (occurred_at, logged_at, type, duration_min, intensity, "
+        "calories_burned, distance_km, raw_text, notes, tags) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (
+            occurred_at.isoformat(),
+            now.isoformat(),
+            exercise["type"],
+            exercise.get("duration_min"),
+            exercise.get("intensity"),
+            exercise.get("calories_burned"),
+            exercise.get("distance_km"),
+            raw_text,
+            exercise.get("notes"),
+            json.dumps(exercise.get("tags", [])),
+        ),
+    )
+    conn.commit()
+    return cursor.lastrowid
+
+
 def meals_since(conn: sqlite3.Connection, since_iso: str) -> list[dict[str, Any]]:
     """Meals (with their items) eaten on/after `since_iso`, oldest first."""
     rows = conn.execute(
@@ -104,6 +136,16 @@ def symptoms_since(conn: sqlite3.Connection, since_iso: str) -> list[dict[str, A
     rows = conn.execute(
         "SELECT occurred_at, type, severity, duration, tags "
         "FROM symptoms WHERE occurred_at >= ? ORDER BY occurred_at",
+        (since_iso,),
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def exercises_since(conn: sqlite3.Connection, since_iso: str) -> list[dict[str, Any]]:
+    """Exercise events on/after `since_iso`, oldest first."""
+    rows = conn.execute(
+        "SELECT occurred_at, type, duration_min, intensity, calories_burned, distance_km, tags "
+        "FROM exercises WHERE occurred_at >= ? ORDER BY occurred_at",
         (since_iso,),
     ).fetchall()
     return [dict(r) for r in rows]
@@ -136,6 +178,15 @@ def all_symptoms(conn: sqlite3.Connection) -> list[dict[str, Any]]:
     return [_item_with_tags(r) for r in rows]
 
 
+def all_exercises(conn: sqlite3.Connection) -> list[dict[str, Any]]:
+    """Every exercise event, oldest first — full fidelity, for /export."""
+    rows = conn.execute(
+        "SELECT occurred_at, logged_at, type, duration_min, intensity, calories_burned, "
+        "distance_km, raw_text, notes, tags FROM exercises ORDER BY occurred_at, id"
+    ).fetchall()
+    return [_item_with_tags(r) for r in rows]
+
+
 def _item_with_tags(row: sqlite3.Row) -> dict[str, Any]:
     """Row -> dict with the JSON `tags` column decoded back into a list."""
     item = dict(row)
@@ -151,12 +202,17 @@ def last_entry(conn: sqlite3.Connection) -> dict[str, Any] | None:
     symptom = conn.execute(
         "SELECT id, logged_at, type FROM symptoms ORDER BY logged_at DESC, id DESC LIMIT 1"
     ).fetchone()
+    exercise = conn.execute(
+        "SELECT id, logged_at, type FROM exercises ORDER BY logged_at DESC, id DESC LIMIT 1"
+    ).fetchone()
 
     candidates = []
     if meal is not None:
         candidates.append(("meal", _parse_dt(meal["logged_at"]), meal["id"], meal["raw_text"]))
     if symptom is not None:
         candidates.append(("symptom", _parse_dt(symptom["logged_at"]), symptom["id"], symptom["type"]))
+    if exercise is not None:
+        candidates.append(("exercise", _parse_dt(exercise["logged_at"]), exercise["id"], exercise["type"]))
     if not candidates:
         return None
 
@@ -164,10 +220,12 @@ def last_entry(conn: sqlite3.Connection) -> dict[str, Any] | None:
     return {"kind": kind, "id": entry_id, "description": f"{kind}: {description}"}
 
 
+_TABLES = {"meal": "meals", "symptom": "symptoms", "exercise": "exercises"}
+
+
 def delete_entry(conn: sqlite3.Connection, kind: str, entry_id: int) -> None:
-    # `kind` is "meal" or "symptom" (never user input) — safe to choose the table.
-    table = "meals" if kind == "meal" else "symptoms"
-    conn.execute(f"DELETE FROM {table} WHERE id = ?", (entry_id,))  # meal_items cascade
+    # `kind` comes from last_entry (never user input) — safe to choose the table.
+    conn.execute(f"DELETE FROM {_TABLES[kind]} WHERE id = ?", (entry_id,))  # meal_items cascade
     conn.commit()
 
 

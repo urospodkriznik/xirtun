@@ -32,7 +32,7 @@ class ToolContext:
 
 TOOLS_DOC = (
     "Tools (call exactly ONE per turn, via `tool` + `args_json`):\n"
-    "- query_diary(since_days:int=28, kind:'all'|'meals'|'symptoms'='all') -> recent diary\n"
+    "- query_diary(since_days:int=28, kind:'all'|'meals'|'symptoms'|'exercises'='all') -> recent diary\n"
     "- read_diet() -> the user's profile (diet.md)\n"
     "- read_observations() -> your own prior notes (observations.md)\n"
     "- write_observations(content:str) -> replace your notes with an updated, concise summary\n"
@@ -64,6 +64,22 @@ def _format_symptoms(symptoms: list[dict[str, Any]]) -> str:
     return "\n".join(lines)
 
 
+def _format_exercises(exercises: list[dict[str, Any]]) -> str:
+    if not exercises:
+        return "Exercise: (none)"
+    lines = ["Exercise:"]
+    for e in exercises:
+        bits = [e["type"]]
+        if e.get("duration_min"):
+            bits.append(f"{round(e['duration_min'])}min")
+        if e.get("intensity"):
+            bits.append(e["intensity"])
+        if e.get("calories_burned"):
+            bits.append(f"~{round(e['calories_burned'])}kcal")
+        lines.append(f"- {e['occurred_at']}: " + ", ".join(bits))
+    return "\n".join(lines)
+
+
 def _query_diary(ctx: ToolContext, args: dict[str, Any]) -> str:
     days = int(args.get("since_days", 28))
     kind = args.get("kind", "all")
@@ -73,6 +89,8 @@ def _query_diary(ctx: ToolContext, args: dict[str, Any]) -> str:
         parts.append(_format_meals(diary.meals_since(ctx.conn, since)))
     if kind in ("all", "symptoms"):
         parts.append(_format_symptoms(diary.symptoms_since(ctx.conn, since)))
+    if kind in ("all", "exercises"):
+        parts.append(_format_exercises(diary.exercises_since(ctx.conn, since)))
     return "\n\n".join(parts)
 
 

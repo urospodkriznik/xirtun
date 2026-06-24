@@ -376,6 +376,53 @@ def test_delfood_removes(conn):
     assert "Removed" in messenger.sent[-1]
 
 
+def _exercise(type_, **kw):
+    base = {"occurred_at": None, "type": type_, "duration_min": None, "intensity": None,
+            "calories_burned": None, "distance_km": None, "notes": None, "tags": []}
+    base.update(kw)
+    return base
+
+
+def test_save_exercise_inserts(conn):
+    eid = diary.save_exercise(conn, "ran 5k", _exercise("running", duration_min=30, calories_burned=300))
+    row = conn.execute("SELECT type, duration_min, calories_burned FROM exercises WHERE id = ?", (eid,)).fetchone()
+    assert row["type"] == "running"
+    assert row["calories_burned"] == 300
+
+
+def test_handle_message_exercise(conn):
+    llm = FakeLLM([
+        LLMResponse(data={"intent": "exercise"}),
+        LLMResponse(data={"needs_clarification": False,
+                          "exercises": [_exercise("running", duration_min=30, calories_burned=300)]}),
+    ])
+    messenger = FakeMessenger()
+    handle_message("I ran 5k this morning", chat_id="c1", llm=llm, conn=conn, messenger=messenger)
+    assert conn.execute("SELECT COUNT(*) AS n FROM exercises").fetchone()["n"] == 1
+    assert "running" in messenger.sent[-1].lower()
+
+
+def test_exercise_command_opens_session_then_logs(conn):
+    llm = FakeLLM([
+        LLMResponse(data={"needs_clarification": False,
+                          "exercises": [_exercise("running", calories_burned=200)]}),
+    ])
+    messenger = FakeMessenger()
+
+    handle_message("/exercise", chat_id="c1", llm=llm, conn=conn, messenger=messenger)
+    assert "what did you do" in messenger.sent[-1].lower()
+
+    handle_message("ran 5k", chat_id="c1", llm=llm, conn=conn, messenger=messenger)
+    assert conn.execute("SELECT COUNT(*) AS n FROM exercises").fetchone()["n"] == 1
+
+
+def test_undo_includes_exercise(conn):
+    diary.save_exercise(conn, "ran", _exercise("running"))
+    messenger = FakeMessenger()
+    handle_message("/undo", chat_id="c1", llm=FakeLLM(), conn=conn, messenger=messenger)
+    assert "exercise" in messenger.sent[-1].lower()
+
+
 def test_handle_message_other(conn):
     llm = FakeLLM([LLMResponse(data={"intent": "other"})])
     messenger = FakeMessenger()

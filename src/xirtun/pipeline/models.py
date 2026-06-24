@@ -17,7 +17,7 @@ from pydantic import BaseModel, Field
 
 class Intent(BaseModel):
     # Literal[...] limits the value to exactly these strings.
-    intent: Literal["meal", "symptom", "note", "shopping", "food", "other"]
+    intent: Literal["meal", "symptom", "exercise", "note", "shopping", "food", "other"]
 
 
 class Item(BaseModel):
@@ -69,6 +69,27 @@ class SymptomExtraction(BaseModel):
     needs_clarification: bool = False
     question: str | None = None
     symptoms: list[SymptomEntry] = Field(default_factory=list)
+
+
+class ExerciseEntry(BaseModel):
+    """One physical-activity event."""
+
+    occurred_at: str | None = None      # ISO-8601 estimate of when it happened
+    type: str                           # short lowercase label: "running", "cycling"
+    duration_min: float | None = None
+    intensity: Literal["low", "moderate", "vigorous"] | None = None
+    calories_burned: float | None = None   # estimated from type/duration/intensity/weight
+    distance_km: float | None = None
+    notes: str | None = None            # free text: sets/reps/weights/route
+    tags: list[str] = Field(default_factory=list)
+
+
+class ExerciseExtraction(BaseModel):
+    """The exercise structurer's output: a clarifying question, or one-or-more activities."""
+
+    needs_clarification: bool = False
+    question: str | None = None
+    exercises: list[ExerciseEntry] = Field(default_factory=list)
 
 
 class Metrics(BaseModel):

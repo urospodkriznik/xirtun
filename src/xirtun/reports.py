@@ -42,7 +42,8 @@ def week_report(conn: sqlite3.Connection, now: datetime) -> str:
     start = now - timedelta(days=7)
     meals = diary.meals_since(conn, start.isoformat())
     symptoms = diary.symptoms_since(conn, start.isoformat())
-    if not meals and not symptoms:
+    exercises = diary.exercises_since(conn, start.isoformat())
+    if not meals and not symptoms and not exercises:
         return "Nothing logged in the past 7 days."
 
     t = _totals(meals)
@@ -55,5 +56,7 @@ def week_report(conn: sqlite3.Connection, now: datetime) -> str:
         f"(~{round(t['calories'] / days_logged)}/day on logged days), "
         f"{round(t['protein_g'])}g protein total "
         f"(~{round(t['protein_g'] / days_logged)}/day). "
+        f"Exercise: {len(exercises)} session(s), "
+        f"~{round(sum(e.get('calories_burned') or 0 for e in exercises))} kcal burned. "
         f"Symptoms logged: {len(symptoms)}."
     )

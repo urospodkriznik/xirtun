@@ -46,6 +46,20 @@ CREATE TABLE IF NOT EXISTS symptoms (
     tags        TEXT
 );
 
+CREATE TABLE IF NOT EXISTS exercises (
+    id              INTEGER PRIMARY KEY,
+    occurred_at     TEXT NOT NULL,
+    logged_at       TEXT NOT NULL,
+    type            TEXT NOT NULL,
+    duration_min    REAL,
+    intensity       TEXT,
+    calories_burned REAL,
+    distance_km     REAL,
+    raw_text        TEXT NOT NULL,
+    notes           TEXT,
+    tags            TEXT
+);
+
 CREATE TABLE IF NOT EXISTS pending (
     chat_id    TEXT PRIMARY KEY,
     kind       TEXT NOT NULL,

@@ -10,6 +10,8 @@ CLASSIFY_SYSTEM = (
     "Classify the user's message into exactly one intent:\n"
     "- 'meal': they are describing food or drink they consumed.\n"
     "- 'symptom': they are reporting a physical symptom or how they feel.\n"
+    "- 'exercise': they are reporting a specific workout/activity they did (e.g. "
+    "'ran 5k this morning', 'did legs at the gym for 45 min').\n"
     "- 'note': they are sharing a goal, preference, routine, exercise habit, or a "
     "fact/idea to remember (e.g. 'I want to gain muscle', 'I exercise twice a week', "
     "'I want more lutein in my diet').\n"

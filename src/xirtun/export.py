@@ -25,6 +25,7 @@ def build_export(conn: sqlite3.Connection, *, now: datetime | None = None) -> di
         "exported_at": now.isoformat(),
         "meals": diary.all_meals(conn),
         "symptoms": diary.all_symptoms(conn),
+        "exercises": diary.all_exercises(conn),
         "known_foods": foods.all_rows(conn),
     }
 

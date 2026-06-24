@@ -23,6 +23,7 @@ from xirtun.messaging.base import Messenger
 from xirtun.memory import diet as memory
 from xirtun.pipeline import sessions
 from xirtun.pipeline.classify import classify
+from xirtun.pipeline.exercise import structure_exercise
 from xirtun.pipeline.food import parse_food
 from xirtun.pipeline.onboarding import onboarding_step
 from xirtun.pipeline.shopping import suggest_shopping
@@ -34,12 +35,15 @@ from xirtun.storage import admin, diary, foods
 logger = logging.getLogger(__name__)
 
 MEAL_COMMANDS = {"/meal", "/new"}
+EXERCISE_COMMANDS = {"/exercise", "/workout"}
 
 HELP_TEXT = (
-    "Just tell me what you ate or how you feel, in plain language, and I'll log it. "
-    "You can also share goals or notes (e.g. 'I want to gain muscle').\n\n"
+    "Just tell me what you ate, how you feel, or what exercise you did, in plain "
+    "language, and I'll log it. You can also share goals or notes (e.g. 'I want to "
+    "gain muscle') or save a food.\n\n"
     "Commands:\n"
     "/meal — start a new meal entry\n"
+    "/exercise — log a workout\n"
     "/undo — remove your last entry (asks to confirm)\n"
     "/today — today's meals and totals\n"
     "/week — the past 7 days\n"
@@ -107,6 +111,11 @@ def handle_message(
     if text in MEAL_COMMANDS:
         sessions.upsert(conn, chat_id, "meal", "", now=now)
         messenger.send("New meal — tell me what you ate.")
+        return
+
+    if text in EXERCISE_COMMANDS:
+        sessions.upsert(conn, chat_id, "exercise", "", now=now)
+        messenger.send("New exercise — what did you do?")
         return
 
     if text == "/undo":
@@ -201,6 +210,8 @@ def handle_message(
         combined = f"{session.text}\n{text}".strip()
         if session.kind == "symptom":
             _process_symptom(combined, chat_id=chat_id, llm=llm, conn=conn, messenger=messenger, now=now)
+        elif session.kind == "exercise":
+            _process_exercise(combined, chat_id=chat_id, llm=llm, conn=conn, messenger=messenger, now=now)
         else:
             _process_meal(combined, chat_id=chat_id, llm=llm, conn=conn, messenger=messenger, now=now)
         return
@@ -212,6 +223,8 @@ def handle_message(
         _process_meal(text, chat_id=chat_id, llm=llm, conn=conn, messenger=messenger, now=now)
     elif intent == "symptom":
         _process_symptom(text, chat_id=chat_id, llm=llm, conn=conn, messenger=messenger, now=now)
+    elif intent == "exercise":
+        _process_exercise(text, chat_id=chat_id, llm=llm, conn=conn, messenger=messenger, now=now)
     elif intent == "note" and diet_path is not None:
         _process_note(text, diet_path=diet_path, messenger=messenger, now=now)
     elif intent == "shopping":
@@ -221,7 +234,7 @@ def handle_message(
     else:
         messenger.send(
             "I'm not sure what that was — tell me what you ate, how you're feeling, "
-            "or a goal/note to remember."
+            "what exercise you did, or a goal/note to remember."
         )
 
 
@@ -267,6 +280,44 @@ def _process_symptom(
     for symptom in draft["symptoms"]:
         diary.save_symptom(conn, text, symptom, now=now)
     messenger.send(format_symptom_ack(draft["symptoms"]))
+    sessions.clear(conn, chat_id)
+
+
+def format_exercise_ack(exercises: list[dict[str, Any]]) -> str:
+    parts = []
+    for e in exercises:
+        details = []
+        if e.get("duration_min"):
+            details.append(f"{round(e['duration_min'])} min")
+        if e.get("intensity"):
+            details.append(e["intensity"])
+        if e.get("calories_burned"):
+            details.append(f"~{round(e['calories_burned'])} kcal burned")
+        suffix = f" ({', '.join(details)})" if details else ""
+        parts.append(f"{e['type']}{suffix}")
+    return "Logged exercise: " + ", ".join(parts) + "."
+
+
+def _process_exercise(
+    text: str,
+    *,
+    chat_id: str,
+    llm: LLMClient,
+    conn: sqlite3.Connection,
+    messenger: Messenger,
+    now: datetime | None = None,
+) -> None:
+    weight_kg = targets.read_metrics(conn).get("weight_kg")
+    draft = structure_exercise(llm, text, now=now, weight_kg=weight_kg)
+
+    if draft["needs_clarification"]:
+        sessions.upsert(conn, chat_id, "exercise", text, now=now)
+        messenger.send(draft["question"] or "Can you tell me a bit more?")
+        return
+
+    for exercise in draft["exercises"]:
+        diary.save_exercise(conn, text, exercise, now=now)
+    messenger.send(format_exercise_ack(draft["exercises"]))
     sessions.clear(conn, chat_id)
 
 

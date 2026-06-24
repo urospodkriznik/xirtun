@@ -34,6 +34,7 @@ logger = logging.getLogger(__name__)
 # The slash-command menu shown in Telegram clients (names: lowercase, no hyphens).
 COMMANDS = [
     ("meal", "Start a new meal entry"),
+    ("exercise", "Log a workout"),
     ("undo", "Remove your last logged entry"),
     ("today", "Today's meals and totals"),
     ("week", "Your past 7 days"),
