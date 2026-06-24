@@ -1,53 +1,125 @@
 # xirtun
 
-A personal nutrition assistant you talk to over Telegram. Log meals and symptoms in
-plain language; xirtun estimates nutrition, remembers your profile, and once a week
-proactively messages you with patterns, risks, and concrete suggestions it found in
-your own data.
+A personal nutrition assistant you talk to over **Telegram**. Log meals and symptoms
+in plain language — by text *or* voice — and xirtun estimates nutrition, remembers
+your profile, learns the foods you buy, and once a week proactively messages you with
+patterns, risks, and concrete suggestions it found in your own data.
 
 It's single-user, runs on your own machine or a small VM, and is written in plain
-Python — the agent loop is hand-written, with no agent framework.
+Python — the agent loop is hand-written, with **no agent framework**.
 
 > **Disclaimer:** xirtun is a personal, informational tool — not a medical device.
 > Its nutrition figures are rough estimates and its observations are not medical
-> advice, diagnosis, or treatment. Always consult a qualified healthcare
-> professional about any health concern.
+> advice, diagnosis, or treatment. Always consult a qualified healthcare professional
+> about any health concern.
 
-## What it does
+---
 
-- **Conversational logging.** "I had a chicken wrap for lunch and felt bloated this
-  morning" becomes structured, timestamped meals and symptoms, with estimated
-  calories, macros, and allergen/sensitivity tags. It asks a follow-up question when
-  a description is too vague to estimate, and infers *when* something happened from
-  cues like "lunch" or "yesterday".
-- **An agent-managed profile** (`diet.md`). A first-run interview captures your age,
-  body metrics, allergies, conditions, diet, and goals. You can add to it any time —
-  "I want to gain muscle", "I exercise twice a week", "I want more lutein" — and the
-  weekly review takes it into account.
-- **A weekly autonomous review.** Once a week a tool-using agent reads your recent
-  diary, your profile, and its own past notes, then sends a short message with
-  non-obvious patterns and actionable recommendations — framed as things to look
-  into or raise with a doctor, never as a diagnosis.
+## What it can do
 
-## Architecture
+**Logging (text or voice, in plain language)**
+- **Meals** — *"leftover curry, ~2 cups, and a beer"* becomes structured, timestamped
+  items with estimated calories and macros. Composite foods are broken into
+  ingredients (a sandwich → bread, chicken, mayo, lettuce) and tagged with likely
+  allergens/sensitivities (dairy, gluten, soy, egg, nuts, FODMAP, …).
+- **Symptoms** — *"I've been bloated since this morning"* → a structured, timestamped
+  symptom with optional severity and duration.
+- **Clarifying questions** — if a description is too vague to estimate, it asks one
+  short follow-up instead of guessing.
+- **Smart timing** — infers *when* something happened ("lunch", "this morning",
+  "yesterday") in your timezone, separate from when you logged it. One message can
+  describe several eating occasions at different times.
+- **Voice notes** — speak instead of typing; the audio is transcribed and flows
+  through the exact same pipeline.
 
-Two loops:
+**Your profile (`diet.md`, agent-managed)**
+- A first-run **interview** captures sex, year of birth, height, weight, activity
+  level, allergies, conditions, family history, diet style, supplements, and goals.
+- Add to it anytime as a **note** — *"I want to gain muscle"*, *"I exercise twice a
+  week"*, *"I want more lutein"* — and the weekly review factors it in.
+- The agent merges new facts in over time and snapshots the old version before each
+  rewrite (so nothing is silently lost).
 
-- **Hot path** (every message): a deterministic state machine —
-  `classify → clarify? → structure → store`.
-- **Weekly review**: a hand-written, ReAct-style agent loop that calls tools
-  (`query_diary`, read/write `observations`, read/update the profile) and decides for
-  itself what — if anything — is worth telling you.
+**Custom food database**
+- Save the exact label nutrition for foods you buy often: *"save Lidl vegan sausage:
+  200g package, per 100g — 214 kcal, 23g protein, 9g fat, 6g carbs, 4.6g fibre"*.
+- When you later log that food, its macros are computed **exactly** from the label
+  (per-100g × grams, or a whole package) instead of being estimated.
+- Duplicate-aware: if a similar food already exists it asks **update / add / cancel**.
 
-Key boundaries keep the system swappable and fully testable:
+**Targets & stats (deterministic — no LLM, no cost)**
+- **Daily calorie + protein targets** computed from your metrics (Mifflin–St Jeor).
+- **`/today`** and **`/week`** summaries with real totals and per-day averages.
 
-- `messaging/` — a `Messenger` protocol; Telegram (raw Bot API, long-polling) today.
-- `llm/` — an `LLMClient` protocol; Gemini today, with a cheap model on the hot path
-  and a strong model for the weekly review.
-- `storage/` — SQLite via the standard library; no ORM.
-- `memory/` — `diet.md` and `observations.md`: durable, human-readable agent memory.
+**Proactive help**
+- **Weekly autonomous review** — a tool-using agent reviews your recent diary, your
+  profile, your targets, and its own past notes, then sends a short message with
+  non-obvious patterns and **actionable** suggestions, framed as things to look into
+  or raise with a doctor — never a diagnosis. It can also ask you a question when it
+  needs more context. Runs on a schedule and on demand.
+- **Shopping-list assistant** — *"heading to the shop, what should I grab?"* →
+  suggestions drawn from your goals, recent diet, and gaps (and it won't suggest what
+  you already ate this week).
 
-The full design and the decision log live in [`docs/`](docs/).
+**Housekeeping**
+- Undo (with confirmation), export your whole diary to JSON, wipe everything (with
+  confirmation), view your profile, and a slash-command menu in the Telegram client.
+
+---
+
+## Commands
+
+| Command | What it does |
+|---|---|
+| *(just type or speak)* | Log a meal/symptom, add a note, ask for a shopping list, or save a food — all in plain language |
+| `/meal`, `/new` | Start a fresh multi-message meal entry |
+| `/undo` | Remove your last logged entry (asks to confirm, shows what it'll delete) |
+| `/today` | Today's meals and totals |
+| `/week` | The past 7 days, with per-day averages |
+| `/shop` | Suggest a shopping list |
+| `/food <name>: <per-100g nutrition>` | Save a food's label (with package size + fibre) |
+| `/myfood` | List your saved foods |
+| `/checkfood <name>` | Check whether a food is saved (exact + similar matches) |
+| `/delfood <name>` | Remove a saved food |
+| `/target` | Your daily calorie & protein target |
+| `/weight <kg>` | Update your weight (keeps targets current) |
+| `/weekly` | Run the weekly review right now |
+| `/profile` | Show your profile (`diet.md`) |
+| `/export` | Export your full diary (meals, symptoms, foods) as JSON |
+| `/cleardata` | Erase all your data (asks to confirm) |
+| `/help` | What I can do |
+
+---
+
+## How it works
+
+Two loops, deliberately separated:
+
+- **Hot path** (every inbound message): a deterministic state machine —
+  `classify → clarify? → structure → store`. The cheap model handles intent
+  classification and structuring; commands and stats are pure Python (no model calls).
+- **Weekly review**: a hand-written, ReAct-style **agent loop** that's given tools
+  (`query_diary`, read/write `observations`, read/update the profile, `get_targets`)
+  and autonomously decides which to call, what to conclude, and whether to message you
+  at all. The scheduler only *triggers* it — the decisions live in the loop.
+
+Boundaries that keep it swappable and fully testable:
+
+- `messaging/` — a `Messenger` protocol; Telegram via the raw Bot API (long-polling,
+  no inbound ports). Voice notes are downloaded and transcribed in the transport, then
+  handed to the pipeline as ordinary text.
+- `llm/` — an `LLMClient` protocol; Gemini today, with a **cheap** model on the hot
+  path and a **strong** model for the weekly review. The adapter handles structured
+  output, audio transcription, and transient-error retries with backoff.
+- `storage/` — SQLite via the standard library; no ORM. Lightweight migrations.
+- `memory/` — `diet.md` (your profile) and `observations.md` (the agent's long-term
+  memory): durable, human-readable Markdown.
+
+The weekly run is **idempotent** (tracked in a `runs` table) with boot-time catch-up,
+so a missed schedule is run once on restart and a manual run can't double-fire. The
+full design and decision log are in [`docs/`](docs/).
+
+---
 
 ## Setup
 
@@ -60,51 +132,72 @@ cp .env.example .env   # then fill in the values
 
 | Variable | Purpose |
 |---|---|
-| `TELEGRAM_TOKEN` | Bot token from @BotFather |
-| `TELEGRAM_CHAT_ID` | Your Telegram chat id |
+| `TELEGRAM_TOKEN` | Bot token from [@BotFather](https://t.me/BotFather) |
+| `TELEGRAM_CHAT_ID` | Your Telegram chat id (e.g. via [@userinfobot](https://t.me/userinfobot)) |
 | `GEMINI_API_KEY` | Google AI Studio API key |
-| `LLM_CHEAP_MODEL` / `LLM_STRONG_MODEL` | Model names (sensible defaults provided) |
-| `TIMEZONE` | IANA name, e.g. `Europe/Ljubljana` |
-| `WEEKLY_CRON` | Weekly-review schedule (default Sunday 09:00) |
+| `LLM_CHEAP_MODEL` | Hot-path model (default `gemini-2.5-flash-lite`; `gemini-2.5-flash` is more reliable for structured output and audio) |
+| `LLM_STRONG_MODEL` | Weekly-review model (default `gemini-2.5-pro`) |
+| `TIMEZONE` | IANA name, e.g. `Europe/Ljubljana` — used to interpret meal times |
+| `WEEKLY_CRON` | Weekly-review schedule (default `0 9 * * 0`, Sunday 09:00) |
+| `DATA_DIR` | Where the SQLite DB and Markdown files live (default `./data`) |
+
+Everything in `DATA_DIR` (`xirtun.db`, `diet.md`, `observations.md`, `diet.history/`)
+is created at runtime and is gitignored — never committed.
 
 ## Running
 
 ```bash
-uv run python -m xirtun.main          # the bot (Telegram long-polling)
-uv run python -m xirtun.run_weekly    # run the weekly review now
+uv run python -m xirtun.main          # the bot: long-polling + in-process weekly scheduler
+uv run python -m xirtun.run_weekly    # run the weekly review once, now
 ```
 
-Or via the `Makefile` shortcuts: `make dev`, `make weekly`, `make check`
-(lint + tests). Run `make` to see all targets.
+Shortcuts are also available via the `Makefile` (`make dev`, `make weekly`,
+`make check`); run `make` to list targets.
+
+On first launch the bot interviews you to build your profile; after that, just talk to
+it.
 
 ## Testing
 
 ```bash
-uv run pytest
+uv run pytest        # ~80 tests, fully offline
+uv run ruff check    # lint
 ```
 
-Tests are fully offline: the LLM and messaging layers are replaced with fakes, so the
-intake pipeline, the agent loop, and storage are covered deterministically with no
-network calls or API cost.
+The LLM and messaging layers are replaced with fakes, so the intake pipeline, the
+agent loop, storage, and every command are covered deterministically — **no network
+calls and no API cost**.
 
 ## Project layout
 
 ```
 src/xirtun/
-  config.py          configuration (env-driven, validated at startup)
-  main.py            bot entrypoint
-  run_weekly.py      weekly-review entrypoint
-  messaging/         Messenger protocol + Telegram transport
-  llm/               LLMClient protocol + Gemini adapter
-  storage/           SQLite access
-  memory/            diet.md / observations.md
-  pipeline/          hot-path intake: classify, structure, sessions, onboarding
+  config.py          env-driven configuration, validated at startup
+  main.py            bot entrypoint (intake + scheduler + command menu)
+  run_weekly.py      weekly-review entrypoint (guarded + idempotent)
+  scheduler.py       APScheduler weekly trigger
+  reports.py         deterministic /today and /week reports
+  targets.py         calorie/protein targets (Mifflin–St Jeor)
+  export.py          /export diary dump
+  messaging/         Messenger protocol + Telegram transport (incl. voice)
+  llm/               LLMClient protocol + Gemini adapter (structured output, audio, retries)
+  storage/           SQLite: diary, custom foods, runs, admin/reset
+  memory/            diet.md / observations.md read/write
+  pipeline/          hot path: classify, structure, symptom, shopping, food,
+                     onboarding, sessions, intake (the state machine)
   agent/             the weekly agent loop and its tools
-tests/
+tests/               offline tests (fakes for LLM + messaging)
 docs/                product, architecture, decisions, roadmap
 ```
+
+## Tech
+
+Python 3.12 · [uv](https://docs.astral.sh/uv/) · Google Gemini (`google-genai`) ·
+`httpx` · `APScheduler` · `pydantic` · SQLite (stdlib) · `pytest` · `ruff`. Synchronous
+throughout; no async, no web framework, no agent framework.
 
 ## Status
 
 A personal project, single-user by design. See [`docs/roadmap.md`](docs/roadmap.md)
-for what's planned next.
+for what's planned next (e.g. photo input, deeper coaching, deploy automation).
+Licensed under [MIT](LICENSE).
