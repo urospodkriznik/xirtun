@@ -28,7 +28,7 @@ from xirtun.pipeline.onboarding import onboarding_step
 from xirtun.pipeline.shopping import suggest_shopping
 from xirtun.pipeline.structure import structure_meal
 from xirtun.pipeline.symptom import structure_symptom
-from xirtun import reports, targets
+from xirtun import export, reports, targets
 from xirtun.storage import admin, diary, foods
 
 logger = logging.getLogger(__name__)
@@ -40,7 +40,7 @@ HELP_TEXT = (
     "You can also share goals or notes (e.g. 'I want to gain muscle').\n\n"
     "Commands:\n"
     "/meal — start a new meal entry\n"
-    "/undo — remove your last entry\n"
+    "/undo — remove your last entry (asks to confirm)\n"
     "/today — today's meals and totals\n"
     "/week — the past 7 days\n"
     "/shop — suggest a shopping list\n"
@@ -50,6 +50,7 @@ HELP_TEXT = (
     "/delfood <name> — remove a saved food\n"
     "/target — your daily calorie & protein target\n"
     "/weight <kg> — update your weight\n"
+    "/export — download your diary as a JSON backup\n"
     "/profile — show your profile\n"
     "/weekly — run your weekly review now\n"
     "/cleardata — erase everything (asks to confirm)"
@@ -109,8 +110,15 @@ def handle_message(
         return
 
     if text == "/undo":
-        deleted = diary.delete_last(conn)
-        messenger.send(f"Removed your last entry ({deleted})." if deleted else "Nothing to undo.")
+        entry = diary.last_entry(conn)
+        if entry is None:
+            messenger.send("Nothing to undo.")
+        else:
+            sessions.upsert(conn, chat_id, "undo_confirm", json.dumps(entry), now=now)
+            messenger.send(
+                f"This will remove your last entry — {entry['description']}.\n"
+                "Reply 'yes' to confirm, or anything else to cancel."
+            )
         return
 
     if text == "/help":
@@ -173,12 +181,22 @@ def handle_message(
         except (IndexError, ValueError):
             messenger.send("Usage: /weight 75")
         return
+    if text == "/export":
+        messenger.send_document(
+            export.export_filename(now),
+            export.export_json(conn, now=now),
+            caption="Your diary export (meals, symptoms, and saved foods).",
+        )
+        return
 
     # 2) Mid-session: continue whatever we were collecting (meal or symptom).
     session = sessions.get_active(conn, chat_id, now=now)
     if session is not None:
         if session.kind == "food_confirm":
             _resolve_food_confirm(session, text, chat_id=chat_id, conn=conn, messenger=messenger)
+            return
+        if session.kind == "undo_confirm":
+            _resolve_undo(session, text, chat_id=chat_id, conn=conn, messenger=messenger)
             return
         combined = f"{session.text}\n{text}".strip()
         if session.kind == "symptom":
@@ -319,8 +337,8 @@ def _process_food(
             json.dumps({"food": food, "candidate": similar[0]}), now=now,
         )
         messenger.send(
-            f"You already have '{similar[0]}'. Is this the same food? Reply 'yes' to "
-            f"update it, or 'no' to save '{food['name']}' as a new entry."
+            f"You already have '{similar[0]}'. Reply 'update' to overwrite it, 'add' to "
+            f"save '{food['name']}' as a new entry, or 'cancel'."
         )
         return
 
@@ -343,12 +361,32 @@ def _resolve_food_confirm(
     data = json.loads(session.text)
     food, candidate = data["food"], data["candidate"]
     sessions.clear(conn, chat_id)
-    if answer.strip().lower().startswith("y"):
+    choice = answer.strip().lower()
+    if choice.startswith(("u", "y")):       # update / overwrite the existing food
         merged = {**food, "name": candidate}
         foods.add(conn, merged)
         messenger.send("Updated — " + _food_line(merged))
-    else:
+    elif choice.startswith("a"):            # add as a new, separate food
         _save_food(conn, food, messenger)
+    else:                                    # cancel (default for anything unrecognized)
+        messenger.send("Cancelled. Nothing was saved.")
+
+
+def _resolve_undo(
+    session,
+    answer: str,
+    *,
+    chat_id: str,
+    conn: sqlite3.Connection,
+    messenger: Messenger,
+) -> None:
+    entry = json.loads(session.text)
+    sessions.clear(conn, chat_id)
+    if answer.strip().lower().startswith("y"):
+        diary.delete_entry(conn, entry["kind"], entry["id"])
+        messenger.send(f"Removed — {entry['description']}.")
+    else:
+        messenger.send("Cancelled. Nothing was removed.")
 
 
 def _food_macro(value: float | None) -> int:

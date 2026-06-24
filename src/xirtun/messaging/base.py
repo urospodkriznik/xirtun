@@ -29,6 +29,10 @@ class Messenger(Protocol):
         """Send a text message to the (single) user."""
         ...
 
+    def send_document(self, filename: str, content: str, caption: str | None = None) -> None:
+        """Send a text file (e.g. the JSON diary export) as a downloadable document."""
+        ...
+
     def run(self, handler: Callable[[IncomingMessage], None]) -> None:
         """Start receiving. Blocks, calling `handler` for each inbound message."""
         ...

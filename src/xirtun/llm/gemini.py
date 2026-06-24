@@ -81,6 +81,20 @@ class GeminiClient:
 
         return LLMResponse(text=response.text or "", data=data)
 
+    def transcribe(self, audio_bytes: bytes, mime_type: str) -> str:
+        """Transcribe an audio clip to plain text (used for Telegram voice notes)."""
+        contents = [
+            types.Content(
+                role="user",
+                parts=[
+                    types.Part(text="Transcribe this audio to plain text. Return only the transcript."),
+                    types.Part.from_bytes(data=audio_bytes, mime_type=mime_type),
+                ],
+            )
+        ]
+        response = self._generate(contents, types.GenerateContentConfig(temperature=0.0))
+        return (response.text or "").strip()
+
     def _generate(self, contents: Any, config: Any) -> Any:
         """Call Gemini, retrying transient errors (5xx, 429, network drops) with backoff."""
         delay = _RETRY_BACKOFF_SECONDS

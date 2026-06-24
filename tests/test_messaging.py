@@ -39,3 +39,32 @@ def test_next_offset_empty_batch_unchanged():
 def test_next_offset_advances_past_highest():
     updates = [{"update_id": 100}, {"update_id": 103}, {"update_id": 101}]
     assert next_offset(updates, 0) == 104
+
+
+def test_voice_update_transcribed(monkeypatch):
+    from xirtun.messaging.telegram import TelegramMessenger
+
+    messenger = TelegramMessenger(
+        token="t", chat_id="1", conn=None, transcribe=lambda data, mime: "two eggs and toast"
+    )
+    monkeypatch.setattr(messenger, "_download_file", lambda file_id: b"audio")
+    update = {
+        "update_id": 1,
+        "message": {"date": 1_700_000_000, "chat": {"id": 4242},
+                    "voice": {"file_id": "abc", "mime_type": "audio/ogg"}},
+    }
+
+    msg = messenger._to_message(update)
+
+    assert msg is not None
+    assert msg.text == "two eggs and toast"
+    assert msg.sender_id == "4242"
+
+
+def test_voice_without_transcriber_ignored():
+    from xirtun.messaging.telegram import TelegramMessenger
+
+    messenger = TelegramMessenger(token="t", chat_id="1", conn=None)  # no transcriber
+    update = {"update_id": 1, "message": {"date": 1_700_000_000, "chat": {"id": 4242},
+                                          "voice": {"file_id": "abc"}}}
+    assert messenger._to_message(update) is None

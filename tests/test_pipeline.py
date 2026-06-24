@@ -173,20 +173,54 @@ def test_delete_last_removes_most_recent(conn):
     assert diary.delete_last(conn) is None                 # nothing left
 
 
-def test_handle_message_undo(conn):
+def test_handle_message_undo_confirms_then_removes(conn):
     diary.save_meal(conn, "banana", _meal([{"name": "banana"}]))
     messenger = FakeMessenger()
 
     handle_message("/undo", chat_id="c1", llm=FakeLLM(), conn=conn, messenger=messenger)
+    assert "remove" in messenger.sent[-1].lower()
+    assert conn.execute("SELECT COUNT(*) AS n FROM meals").fetchone()["n"] == 1  # not yet
 
+    handle_message("yes", chat_id="c1", llm=FakeLLM(), conn=conn, messenger=messenger)
     assert conn.execute("SELECT COUNT(*) AS n FROM meals").fetchone()["n"] == 0
     assert "Removed" in messenger.sent[-1]
+
+
+def test_handle_message_undo_cancel_keeps_entry(conn):
+    diary.save_meal(conn, "banana", _meal([{"name": "banana"}]))
+    messenger = FakeMessenger()
+
+    handle_message("/undo", chat_id="c1", llm=FakeLLM(), conn=conn, messenger=messenger)
+    handle_message("nope", chat_id="c1", llm=FakeLLM(), conn=conn, messenger=messenger)
+
+    assert conn.execute("SELECT COUNT(*) AS n FROM meals").fetchone()["n"] == 1  # kept
+    assert "Cancelled" in messenger.sent[-1]
 
 
 def test_handle_message_help(conn):
     messenger = FakeMessenger()
     handle_message("/help", chat_id="c1", llm=FakeLLM(), conn=conn, messenger=messenger)
     assert "/undo" in messenger.sent[-1]
+
+
+def test_handle_message_export_dumps_diary(conn):
+    from xirtun.storage import foods
+
+    diary.save_meal(conn, "banana", _meal([{"name": "banana", "calories": 90, "tags": ["fruit"]}]))
+    diary.save_symptom(conn, "headache", _symptom("headache", severity=2))
+    foods.add(conn, {"name": "Tofu", "calories": 120})
+    messenger = FakeMessenger()
+
+    handle_message("/export", chat_id="c1", llm=FakeLLM(), conn=conn, messenger=messenger)
+
+    assert len(messenger.documents) == 1
+    filename, content, _caption = messenger.documents[0]
+    assert filename.endswith(".json")
+    data = json.loads(content)
+    assert data["meals"][0]["items"][0]["name"] == "banana"
+    assert data["meals"][0]["items"][0]["tags"] == ["fruit"]   # JSON column decoded
+    assert data["symptoms"][0]["type"] == "headache"
+    assert data["known_foods"][0]["name"] == "Tofu"
 
 
 def test_handle_message_profile(conn, tmp_path):
@@ -313,11 +347,24 @@ def test_food_duplicate_confirm_then_update(conn):
     messenger = FakeMessenger()
 
     handle_message("/food myway falafel: 200 kcal, 20g protein", chat_id="c1", llm=llm, conn=conn, messenger=messenger)
-    assert "same food" in messenger.sent[-1].lower()  # asked to confirm
+    assert "update" in messenger.sent[-1].lower()  # offered update/add/cancel
 
-    handle_message("yes", chat_id="c1", llm=FakeLLM(), conn=conn, messenger=messenger)
+    handle_message("update", chat_id="c1", llm=FakeLLM(), conn=conn, messenger=messenger)
     assert "myway falafel" not in foods.names(conn)                              # not added as new
     assert foods.find_by_name(conn, "myway vegan falafels")["calories"] == 200    # existing updated
+
+
+def test_food_duplicate_cancel_saves_nothing(conn):
+    from xirtun.storage import foods
+    foods.add(conn, {"name": "myway vegan falafels", "calories": 214})
+    llm = FakeLLM([LLMResponse(data={"name": "myway falafel", "calories": 200})])
+    messenger = FakeMessenger()
+
+    handle_message("/food myway falafel: 200 kcal", chat_id="c1", llm=llm, conn=conn, messenger=messenger)
+    handle_message("cancel", chat_id="c1", llm=FakeLLM(), conn=conn, messenger=messenger)
+
+    assert "myway falafel" not in foods.names(conn)                              # not added
+    assert foods.find_by_name(conn, "myway vegan falafels")["calories"] == 214    # unchanged
 
 
 def test_delfood_removes(conn):

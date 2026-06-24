@@ -14,10 +14,14 @@ from xirtun.messaging.base import IncomingMessage
 class FakeMessenger:
     def __init__(self) -> None:
         self.sent: list[str] = []
+        self.documents: list[tuple[str, str, str | None]] = []  # (filename, content, caption)
         self._handler: Callable[[IncomingMessage], None] | None = None
 
     def send(self, text: str) -> None:
         self.sent.append(text)
+
+    def send_document(self, filename: str, content: str, caption: str | None = None) -> None:
+        self.documents.append((filename, content, caption))
 
     def run(self, handler: Callable[[IncomingMessage], None]) -> None:
         # Unlike the real messenger, we don't block here — we just remember the

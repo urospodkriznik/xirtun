@@ -1,0 +1,38 @@
+# systemd unit for the xirtun bot — one long-running process (Telegram long-poll
+# + in-process APScheduler weekly job). See DEPLOY.md for the full setup.
+#
+# Install as a system service:
+#   sudo cp deploy/xirtun.service /etc/systemd/system/xirtun.service
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now xirtun
+#
+# Adjust User/paths below if you don't use the `xirtun` deploy user / layout from
+# DEPLOY.md. The unit name `xirtun` is what CD restarts (systemctl restart xirtun).
+
+[Unit]
+Description=xirtun personal nutritionist Telegram bot
+# Long-polling needs outbound network; wait for it before starting.
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=xirtun
+Group=xirtun
+WorkingDirectory=/home/xirtun/xirtun
+
+# Secrets and config live only on the VM, never in git. systemd reads this file as
+# KEY=VALUE lines — the same .env the app loads in dev (python-dotenv is a no-op
+# when the vars are already in the environment).
+EnvironmentFile=/home/xirtun/xirtun/.env
+
+# uv is installed per-user (~/.local/bin) and is not on systemd's PATH, so call it
+# by absolute path. `uv run` resolves the project venv and Python itself.
+ExecStart=/home/xirtun/.local/bin/uv run python -m xirtun.main
+
+# Keep the bot up across crashes, restarts, and reboots.
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

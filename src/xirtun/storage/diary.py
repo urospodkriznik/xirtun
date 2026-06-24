@@ -109,12 +109,42 @@ def symptoms_since(conn: sqlite3.Connection, since_iso: str) -> list[dict[str, A
     return [dict(r) for r in rows]
 
 
-def delete_last(conn: sqlite3.Connection) -> str | None:
-    """Delete the most recently logged entry (meal or symptom).
+def all_meals(conn: sqlite3.Connection) -> list[dict[str, Any]]:
+    """Every meal (with its items), oldest first — full fidelity, for /export."""
+    rows = conn.execute(
+        "SELECT id, occurred_at, logged_at, raw_text, notes FROM meals ORDER BY occurred_at, id"
+    ).fetchall()
+    result = []
+    for r in rows:
+        items = conn.execute(
+            "SELECT name, quantity_g, calories, protein_g, fat_g, carbs_g, tags "
+            "FROM meal_items WHERE meal_id = ? ORDER BY id",
+            (r["id"],),
+        ).fetchall()
+        meal = {k: r[k] for k in ("occurred_at", "logged_at", "raw_text", "notes")}
+        meal["items"] = [_item_with_tags(i) for i in items]
+        result.append(meal)
+    return result
 
-    Returns a short description of what was removed, or None if there was nothing
-    to undo.
-    """
+
+def all_symptoms(conn: sqlite3.Connection) -> list[dict[str, Any]]:
+    """Every symptom event, oldest first — full fidelity, for /export."""
+    rows = conn.execute(
+        "SELECT occurred_at, logged_at, type, severity, duration, raw_text, tags "
+        "FROM symptoms ORDER BY occurred_at, id"
+    ).fetchall()
+    return [_item_with_tags(r) for r in rows]
+
+
+def _item_with_tags(row: sqlite3.Row) -> dict[str, Any]:
+    """Row -> dict with the JSON `tags` column decoded back into a list."""
+    item = dict(row)
+    item["tags"] = json.loads(item["tags"]) if item.get("tags") else []
+    return item
+
+
+def last_entry(conn: sqlite3.Connection) -> dict[str, Any] | None:
+    """The most recently logged entry (meal or symptom), without deleting it."""
     meal = conn.execute(
         "SELECT id, logged_at, raw_text FROM meals ORDER BY logged_at DESC, id DESC LIMIT 1"
     ).fetchone()
@@ -130,9 +160,21 @@ def delete_last(conn: sqlite3.Connection) -> str | None:
     if not candidates:
         return None
 
-    kind, _, row_id, description = max(candidates, key=lambda c: c[1])
-    # `table` comes from this fixed set, never user input — safe to interpolate.
+    kind, _, entry_id, description = max(candidates, key=lambda c: c[1])
+    return {"kind": kind, "id": entry_id, "description": f"{kind}: {description}"}
+
+
+def delete_entry(conn: sqlite3.Connection, kind: str, entry_id: int) -> None:
+    # `kind` is "meal" or "symptom" (never user input) — safe to choose the table.
     table = "meals" if kind == "meal" else "symptoms"
-    conn.execute(f"DELETE FROM {table} WHERE id = ?", (row_id,))  # meal_items cascade
+    conn.execute(f"DELETE FROM {table} WHERE id = ?", (entry_id,))  # meal_items cascade
     conn.commit()
-    return f"{kind}: {description}"
+
+
+def delete_last(conn: sqlite3.Connection) -> str | None:
+    """Delete the most recently logged entry. Returns its description, or None."""
+    entry = last_entry(conn)
+    if entry is None:
+        return None
+    delete_entry(conn, entry["kind"], entry["id"])
+    return entry["description"]

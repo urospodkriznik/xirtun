@@ -74,11 +74,14 @@ class TelegramMessenger:
         *,
         poll_timeout: int = 30,
         api: str = DEFAULT_API,
+        transcribe: Callable[[bytes, str], str] | None = None,
     ) -> None:
         self._chat_id = chat_id
         self._conn = conn
         self._poll_timeout = poll_timeout
         self._base = f"{api}/bot{token}"
+        self._file_base = f"{api}/file/bot{token}"
+        self._transcribe = transcribe
         # The HTTP client's timeout must exceed the long-poll timeout, or the
         # client would give up before Telegram replies.
         self._client = httpx.Client(timeout=poll_timeout + 10)
@@ -89,6 +92,18 @@ class TelegramMessenger:
             json={"chat_id": self._chat_id, "text": text},
         )
         resp.raise_for_status()  # turns a 4xx/5xx into an exception
+
+    def send_document(self, filename: str, content: str, caption: str | None = None) -> None:
+        """Upload `content` as a file the user can download (multipart sendDocument)."""
+        data = {"chat_id": self._chat_id}
+        if caption:
+            data["caption"] = caption
+        resp = self._client.post(
+            f"{self._base}/sendDocument",
+            data=data,
+            files={"document": (filename, content.encode("utf-8"), "application/json")},
+        )
+        resp.raise_for_status()
 
     def set_commands(self, commands: list[tuple[str, str]]) -> None:
         """Register the slash-command menu shown in Telegram clients."""
@@ -122,7 +137,7 @@ class TelegramMessenger:
             db.kv_set(self._conn, OFFSET_KEY, str(next_offset(updates, offset)))
 
             for update in updates:
-                msg = parse_update(update)
+                msg = self._to_message(update)
                 if msg is not None:
                     yield msg
 
@@ -137,3 +152,38 @@ class TelegramMessenger:
                     self.send("Sorry — something went wrong on my end. Please try again in a moment.")
                 except Exception:                  # noqa: BLE001 — best effort
                     logger.exception("failed to send error notice")
+
+    def _to_message(self, update: dict[str, Any]) -> IncomingMessage | None:
+        """Convert an update to an IncomingMessage, transcribing voice notes to text."""
+        message = update.get("message")
+        if not message:
+            return None
+        if "text" in message:
+            return parse_update(update)
+
+        voice = message.get("voice") or message.get("audio")
+        if voice is None or self._transcribe is None:
+            return None
+        try:
+            audio = self._download_file(voice["file_id"])
+            text = self._transcribe(audio, voice.get("mime_type") or "audio/ogg")
+        except Exception:                          # noqa: BLE001 — a bad clip shouldn't crash polling
+            logger.exception("voice transcription failed")
+            return None
+        if not text:
+            return None
+        logger.info("transcribed voice note: %s", text)
+        return IncomingMessage(
+            sender_id=str(message["chat"]["id"]),
+            text=text,
+            timestamp=datetime.fromtimestamp(message["date"], tz=timezone.utc),
+            raw=update,
+        )
+
+    def _download_file(self, file_id: str) -> bytes:
+        resp = self._client.get(f"{self._base}/getFile", params={"file_id": file_id})
+        resp.raise_for_status()
+        file_path = resp.json()["result"]["file_path"]
+        download = self._client.get(f"{self._file_base}/{file_path}")
+        download.raise_for_status()
+        return download.content

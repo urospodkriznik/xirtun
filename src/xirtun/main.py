@@ -44,6 +44,7 @@ COMMANDS = [
     ("delfood", "Remove a saved food"),
     ("target", "Your daily calorie & protein target"),
     ("weight", "Update your weight"),
+    ("export", "Download your diary as a JSON backup"),
     ("weekly", "Run your weekly review now"),
     ("profile", "Show your profile"),
     ("cleardata", "Erase all your data"),
@@ -89,6 +90,7 @@ def main() -> None:
         token=config.telegram_token,
         chat_id=config.telegram_chat_id,
         conn=conn,
+        transcribe=llm.transcribe,  # voice notes -> text via the cheap model
     )
     try:
         messenger.set_commands(COMMANDS)

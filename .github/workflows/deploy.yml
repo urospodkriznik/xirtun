@@ -1,0 +1,35 @@
+name: Deploy
+
+# CD: after CI succeeds on `main`, SSH into the VM and update it in place.
+# Triggered by CI completing (not by push directly), so we never deploy a commit
+# that failed lint/tests. See DEPLOY.md for the VM-side prerequisites:
+#   - the repo checked out at ~/xirtun
+#   - the xirtun systemd unit installed
+#   - NOPASSWD sudo scoped to `systemctl restart xirtun`
+#   - secrets SSH_HOST / SSH_USER / SSH_KEY configured on the repo
+on:
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
+    branches: [main]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    # Only when CI actually passed (workflow_run also fires on failure/cancel).
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    steps:
+      - name: Deploy over SSH
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_KEY }}
+          # .env stays on the VM and is never touched here. uv is called by
+          # absolute path because the SSH session's PATH omits ~/.local/bin.
+          script: |
+            set -euo pipefail
+            cd ~/xirtun
+            git pull --ff-only
+            ~/.local/bin/uv sync --frozen
+            sudo systemctl restart xirtun
