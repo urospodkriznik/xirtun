@@ -17,7 +17,7 @@ from pydantic import BaseModel, Field
 
 class Intent(BaseModel):
     # Literal[...] limits the value to exactly these strings.
-    intent: Literal["meal", "symptom", "note", "shopping", "other"]
+    intent: Literal["meal", "symptom", "note", "shopping", "food", "other"]
 
 
 class Item(BaseModel):
@@ -28,6 +28,7 @@ class Item(BaseModel):
     fat_g: float | None = None
     carbs_g: float | None = None
     tags: list[str] = Field(default_factory=list)
+    known_food: str | None = None      # name of a matching saved food, if any
 
 
 class MealEntry(BaseModel):
@@ -88,6 +89,24 @@ class OnboardingStep(BaseModel):
     question: str | None = None        # set while done is False
     diet_markdown: str | None = None   # the finished profile, set when done is True
     metrics: Metrics | None = None     # structured body metrics, filled when done
+
+
+class FoodRegistration(BaseModel):
+    """A food's per-100g nutrition, parsed from a 'save this food' message."""
+
+    name: str = Field(description="food name, including brand if given")
+    brand: str | None = Field(default=None, description="brand, if mentioned")
+    calories: float | None = Field(default=None, description="kcal per 100g")
+    protein_g: float | None = Field(default=None, description="grams of protein per 100g")
+    fat_g: float | None = Field(default=None, description="grams of fat per 100g")
+    carbs_g: float | None = Field(
+        default=None, description="grams of carbohydrate per 100g (also called 'carbs' or 'ch')"
+    )
+    fiber_g: float | None = Field(
+        default=None, description="grams of fibre per 100g (also called 'fibre' or 'fibra')"
+    )
+    package_g: float | None = Field(default=None, description="total grams in one package, if stated")
+    tags: list[str] = Field(default_factory=list)
 
 
 class AgentAction(BaseModel):

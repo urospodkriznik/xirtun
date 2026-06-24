@@ -14,6 +14,8 @@ CLASSIFY_SYSTEM = (
     "fact/idea to remember (e.g. 'I want to gain muscle', 'I exercise twice a week', "
     "'I want more lutein in my diet').\n"
     "- 'shopping': they are asking what to buy or for help planning groceries.\n"
+    "- 'food': they are saving/registering a food's nutrition facts (e.g. 'save Lidl "
+    "vegan sausage: per 100g 250 kcal, 18g protein, 12g fat, 4g carbs').\n"
     "- 'other': anything else (questions, chit-chat).\n"
     "Respond using the provided schema."
 )

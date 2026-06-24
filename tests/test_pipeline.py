@@ -249,6 +249,86 @@ def test_weight_command_updates_metric(conn):
     assert targets.read_metrics(conn)["weight_kg"] == 72
 
 
+def test_food_command_registers(conn):
+    from xirtun.storage import foods
+    llm = FakeLLM([LLMResponse(data={
+        "name": "Lidl vegan sausage", "calories": 250, "protein_g": 18, "fat_g": 12, "carbs_g": 4, "tags": [],
+    })])
+    messenger = FakeMessenger()
+    handle_message("/food Lidl vegan sausage: 250kcal 18p 12f 4c", chat_id="c1", llm=llm, conn=conn, messenger=messenger)
+    assert "Saved" in messenger.sent[-1]
+    assert "Lidl vegan sausage" in foods.names(conn)
+
+
+def test_food_intent_registers(conn):
+    from xirtun.storage import foods
+    llm = FakeLLM([
+        LLMResponse(data={"intent": "food"}),
+        LLMResponse(data={"name": "Tofu", "calories": 120, "protein_g": 12, "fat_g": 7, "carbs_g": 2, "tags": []}),
+    ])
+    messenger = FakeMessenger()
+    handle_message("save tofu: 120 kcal per 100g, 12g protein", chat_id="c1", llm=llm, conn=conn, messenger=messenger)
+    assert "Tofu" in foods.names(conn)
+
+
+def test_known_food_overrides_macros(conn):
+    from xirtun.storage import foods
+    foods.add(conn, {"name": "vegan sausage", "brand": "Lidl", "calories": 250, "protein_g": 18, "fat_g": 12, "carbs_g": 4, "tags": []})
+    llm = FakeLLM([
+        LLMResponse(data={"intent": "meal"}),
+        LLMResponse(data={"needs_clarification": False, "meals": [
+            {"occurred_at": None, "notes": None, "items": [
+                {"name": "vegan sausage", "known_food": "vegan sausage", "quantity_g": 200, "calories": 999},
+            ]},
+        ]}),
+    ])
+    messenger = FakeMessenger()
+    handle_message("200g vegan sausage", chat_id="c1", llm=llm, conn=conn, messenger=messenger)
+
+    row = conn.execute("SELECT calories, protein_g FROM meal_items").fetchone()
+    assert row["calories"] == 500   # 250/100 * 200, overriding the model's 999
+    assert row["protein_g"] == 36   # 18/100 * 200
+
+
+def test_myfood_lists_saved(conn):
+    from xirtun.storage import foods
+    foods.add(conn, {"name": "Tofu", "calories": 120, "protein_g": 12})
+    messenger = FakeMessenger()
+    handle_message("/myfood", chat_id="c1", llm=FakeLLM(), conn=conn, messenger=messenger)
+    assert "Tofu" in messenger.sent[-1]
+
+
+def test_checkfood_finds_similar(conn):
+    from xirtun.storage import foods
+    foods.add(conn, {"name": "myway vegan falafels", "calories": 214})
+    messenger = FakeMessenger()
+    handle_message("/checkfood myway falafel", chat_id="c1", llm=FakeLLM(), conn=conn, messenger=messenger)
+    assert "falafel" in messenger.sent[-1].lower()
+
+
+def test_food_duplicate_confirm_then_update(conn):
+    from xirtun.storage import foods
+    foods.add(conn, {"name": "myway vegan falafels", "calories": 214, "protein_g": 23})
+    llm = FakeLLM([LLMResponse(data={"name": "myway falafel", "calories": 200, "protein_g": 20})])
+    messenger = FakeMessenger()
+
+    handle_message("/food myway falafel: 200 kcal, 20g protein", chat_id="c1", llm=llm, conn=conn, messenger=messenger)
+    assert "same food" in messenger.sent[-1].lower()  # asked to confirm
+
+    handle_message("yes", chat_id="c1", llm=FakeLLM(), conn=conn, messenger=messenger)
+    assert "myway falafel" not in foods.names(conn)                              # not added as new
+    assert foods.find_by_name(conn, "myway vegan falafels")["calories"] == 200    # existing updated
+
+
+def test_delfood_removes(conn):
+    from xirtun.storage import foods
+    foods.add(conn, {"name": "Tofu", "calories": 120})
+    messenger = FakeMessenger()
+    handle_message("/delfood Tofu", chat_id="c1", llm=FakeLLM(), conn=conn, messenger=messenger)
+    assert "Tofu" not in foods.names(conn)
+    assert "Removed" in messenger.sent[-1]
+
+
 def test_handle_message_other(conn):
     llm = FakeLLM([LLMResponse(data={"intent": "other"})])
     messenger = FakeMessenger()

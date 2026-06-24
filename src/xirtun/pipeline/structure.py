@@ -34,6 +34,9 @@ STRUCTURE_SYSTEM = (
     "- Break composite foods into likely component ingredients when it matters for "
     "allergen/sensitivity tracking (a sandwich -> bread, chicken, mayo, lettuce).\n"
     "- For each item: name, quantity in grams, calories, protein/fat/carbs in grams.\n"
+    "- If an item matches one of the user's known foods (listed in the message), set "
+    "`known_food` to its exact name and include quantity_g — its nutrition will be "
+    "filled from the saved label.\n"
     "- Tag each item with likely SENSITIVITY/ALLERGEN markers (dairy, gluten, soy, "
     "egg, nuts, shellfish, nightshade, histamine, caffeine, alcohol, fodmap) plus "
     "notable attributes ('iron-rich', 'fried', 'processed').\n"
@@ -42,11 +45,26 @@ STRUCTURE_SYSTEM = (
 )
 
 
-def structure_meal(llm: LLMClient, text: str, *, now: datetime | None = None) -> dict[str, Any]:
+def structure_meal(
+    llm: LLMClient,
+    text: str,
+    *,
+    now: datetime | None = None,
+    known_foods: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
     now = now or datetime.now().astimezone()
+    known = ""
+    if known_foods:
+        lines = []
+        for food in known_foods:
+            line = f"- {food['name']}"
+            if food.get("package_g"):
+                line += f" (whole package = {round(food['package_g'])}g)"
+            lines.append(line)
+        known = "\n\nMy known foods (set known_food to the exact name shown):\n" + "\n".join(lines)
     user = (
         f"Current date and time: {now:%Y-%m-%d %H:%M %A} ({now:%Z}, UTC{now:%z}).\n\n"
-        f"What I ate:\n{text}"
+        f"What I ate:\n{text}{known}"
     )
     messages = [
         {"role": "system", "content": STRUCTURE_SYSTEM},

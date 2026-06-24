@@ -90,6 +90,14 @@ class TelegramMessenger:
         )
         resp.raise_for_status()  # turns a 4xx/5xx into an exception
 
+    def set_commands(self, commands: list[tuple[str, str]]) -> None:
+        """Register the slash-command menu shown in Telegram clients."""
+        resp = self._client.post(
+            f"{self._base}/setMyCommands",
+            json={"commands": [{"command": name, "description": desc} for name, desc in commands]},
+        )
+        resp.raise_for_status()
+
     def _get_offset(self) -> int:
         raw = db.kv_get(self._conn, OFFSET_KEY)
         return int(raw) if raw else 0

@@ -27,7 +27,11 @@ The smallest thing that is genuinely useful and exercises real autonomy.
 Captured so good ideas are not lost. Each needs its own scoping before it starts.
 
 ### Input & interaction
-- **Voice input** (explicitly planned by the author for v2).
+- **Voice input.** Telegram delivers voice notes as audio files, not text (bots
+  don't get Telegram's own transcription). The transport would download the file
+  and transcribe it — Gemini accepts audio input directly, so no separate STT
+  provider — then emit a normal `IncomingMessage`; the rest of the pipeline is
+  unchanged.
 - **Photo input** (vision model to identify food from a picture).
 - **Agent-planted follow-up questions:** the weekly run writes targeted questions
   into `observations.md` (e.g. "does this burger contain soy?") that the hot path

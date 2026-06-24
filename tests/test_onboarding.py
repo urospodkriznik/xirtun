@@ -59,7 +59,7 @@ def test_clear_data_requires_confirm(conn, tmp_path):
     diet.write_text("# Profile")
     messenger = FakeMessenger()
 
-    dispatch("/clear-data", chat_id="c1", llm=FakeLLM(), conn=conn, messenger=messenger, diet_path=diet)
+    dispatch("/cleardata", chat_id="c1", llm=FakeLLM(), conn=conn, messenger=messenger, diet_path=diet)
 
     assert "confirm" in messenger.sent[-1].lower()
     assert diet.exists()  # not wiped without confirmation
@@ -70,7 +70,7 @@ def test_clear_data_confirm_wipes(conn, tmp_path):
     diet.write_text("# Profile")
     messenger = FakeMessenger()
 
-    dispatch("/clear-data confirm", chat_id="c1", llm=FakeLLM(), conn=conn, messenger=messenger, diet_path=diet)
+    dispatch("/cleardata confirm", chat_id="c1", llm=FakeLLM(), conn=conn, messenger=messenger, diet_path=diet)
 
     assert not diet.exists()
 

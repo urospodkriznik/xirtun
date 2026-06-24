@@ -31,6 +31,25 @@ from xirtun.storage import db
 
 logger = logging.getLogger(__name__)
 
+# The slash-command menu shown in Telegram clients (names: lowercase, no hyphens).
+COMMANDS = [
+    ("meal", "Start a new meal entry"),
+    ("undo", "Remove your last logged entry"),
+    ("today", "Today's meals and totals"),
+    ("week", "Your past 7 days"),
+    ("shop", "Suggest a shopping list"),
+    ("food", "Save a food's nutrition label"),
+    ("myfood", "List your saved foods"),
+    ("checkfood", "Check if a food is saved"),
+    ("delfood", "Remove a saved food"),
+    ("target", "Your daily calorie & protein target"),
+    ("weight", "Update your weight"),
+    ("weekly", "Run your weekly review now"),
+    ("profile", "Show your profile"),
+    ("cleardata", "Erase all your data"),
+    ("help", "What I can do"),
+]
+
 
 def make_intake_handler(
     llm: LLMClient,
@@ -71,6 +90,10 @@ def main() -> None:
         chat_id=config.telegram_chat_id,
         conn=conn,
     )
+    try:
+        messenger.set_commands(COMMANDS)
+    except Exception:  # noqa: BLE001 — non-fatal if Telegram is unreachable at boot
+        logger.exception("failed to register command menu")
 
     start_scheduler(config)
     # Catch up a missed weekly review (but not before the user has onboarded).

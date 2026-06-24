@@ -13,9 +13,11 @@ from __future__ import annotations
 
 import json
 import logging
+import random
 import time
 from typing import Any
 
+import httpx
 from google import genai
 from google.genai import errors, types
 
@@ -23,13 +25,18 @@ from xirtun.llm.base import LLMResponse
 
 logger = logging.getLogger(__name__)
 
-_MAX_RETRIES = 3
+_MAX_RETRIES = 5
 _RETRY_BACKOFF_SECONDS = 2.0
+# Fail a hung request fast (instead of waiting ~60s) so a retry gets a real chance.
+_REQUEST_TIMEOUT_MS = 30_000
 
 
 class GeminiClient:
     def __init__(self, api_key: str, model: str, *, temperature: float = 0.0) -> None:
-        self._client = genai.Client(api_key=api_key)
+        self._client = genai.Client(
+            api_key=api_key,
+            http_options=types.HttpOptions(timeout=_REQUEST_TIMEOUT_MS),
+        )
         self._model = model
         self._temperature = temperature
 
@@ -75,18 +82,23 @@ class GeminiClient:
         return LLMResponse(text=response.text or "", data=data)
 
     def _generate(self, contents: Any, config: Any) -> Any:
-        """Call Gemini, retrying transient errors (5xx, 429) with backoff."""
+        """Call Gemini, retrying transient errors (5xx, 429, network drops) with backoff."""
         delay = _RETRY_BACKOFF_SECONDS
         for attempt in range(_MAX_RETRIES):
             try:
                 return self._client.models.generate_content(
                     model=self._model, contents=contents, config=config
                 )
-            except (errors.ServerError, errors.ClientError) as exc:
+            except (errors.ServerError, errors.ClientError, httpx.RequestError) as exc:
                 code = getattr(exc, "code", None)
-                retryable = isinstance(exc, errors.ServerError) or code == 429
+                # 5xx and network/transport drops (e.g. "server disconnected") are
+                # transient; 429 is rate-limiting. Other 4xx are not retryable.
+                retryable = isinstance(exc, (errors.ServerError, httpx.RequestError)) or code == 429
                 if not retryable or attempt == _MAX_RETRIES - 1:
                     raise
-                logger.warning("Gemini transient error (%s); retrying in %.0fs", code, delay)
-                time.sleep(delay)
+                sleep_for = delay + random.uniform(0, 1)  # jitter to spread out retries
+                logger.warning(
+                    "Gemini transient error (%s); retrying in %.1fs", type(exc).__name__, sleep_for
+                )
+                time.sleep(sleep_for)
                 delay *= 2

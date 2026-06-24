@@ -62,6 +62,20 @@ CREATE TABLE IF NOT EXISTS runs (
 );
 
 CREATE TABLE IF NOT EXISTS kv (k TEXT PRIMARY KEY, v TEXT);
+
+CREATE TABLE IF NOT EXISTS known_foods (
+    id         INTEGER PRIMARY KEY,
+    name       TEXT NOT NULL UNIQUE,
+    brand      TEXT,
+    calories   REAL,
+    protein_g  REAL,
+    fat_g      REAL,
+    carbs_g    REAL,
+    fiber_g    REAL,
+    package_g  REAL,
+    tags       TEXT,
+    created_at TEXT NOT NULL
+);
 """
 
 
@@ -74,9 +88,18 @@ def get_connection(db_path: Path) -> sqlite3.Connection:
 
 
 def init_db(db_path: Path) -> None:
-    """Create all tables if they don't exist yet."""
+    """Create all tables if they don't exist, and apply lightweight migrations."""
     with get_connection(db_path) as conn:
         conn.executescript(SCHEMA)
+        _migrate(conn)
+
+
+def _migrate(conn: sqlite3.Connection) -> None:
+    """Add columns introduced after an existing database may already have been created."""
+    columns = {row["name"] for row in conn.execute("PRAGMA table_info(known_foods)")}
+    for column in ("package_g", "fiber_g"):
+        if column not in columns:
+            conn.execute(f"ALTER TABLE known_foods ADD COLUMN {column} REAL")
 
 
 # --- key/value helpers (e.g. the Telegram update offset) ---
