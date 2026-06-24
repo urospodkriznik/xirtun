@@ -74,6 +74,9 @@ uv run python -m xirtun.main          # the bot (Telegram long-polling)
 uv run python -m xirtun.run_weekly    # run the weekly review now
 ```
 
+Or via the `Makefile` shortcuts: `make dev`, `make weekly`, `make check`
+(lint + tests). Run `make` to see all targets.
+
 ## Testing
 
 ```bash

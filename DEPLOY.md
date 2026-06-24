@@ -124,6 +124,10 @@ sudo journalctl -u xirtun -n 200        # last 200 lines
 sudo journalctl -u xirtun --since today
 ```
 
+The repo's `Makefile` wraps the common VM ops so you don't have to remember them:
+`make logs`, `make restart`, `make status`, `make stop`, `make start` (run from
+`~/xirtun` on the VM). `make` lists everything.
+
 ## 8. Allow CD to restart the service (passwordless sudo)
 
 The deploy workflow restarts the service over SSH, so the deploy user needs
