@@ -84,6 +84,7 @@ Python — the agent loop is hand-written, with **no agent framework**.
 | `/undo` | Remove your last logged entry (asks to confirm, shows what it'll delete) |
 | `/today` | Today's meals and totals |
 | `/week` | The past 7 days, with per-day averages |
+| `/lastmeals` · `/lastsymptoms` · `/lastworkouts` · `/lastnotes` | Your last 3 of each, with times — to check what you've already logged |
 | `/shop` | Suggest a shopping list |
 | `/food <name>: <per-100g nutrition>` | Save a food's label (with package size + fibre) |
 | `/myfood` | List your saved foods |

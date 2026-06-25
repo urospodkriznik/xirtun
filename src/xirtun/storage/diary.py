@@ -236,3 +236,37 @@ def delete_last(conn: sqlite3.Connection) -> str | None:
         return None
     delete_entry(conn, entry["kind"], entry["id"])
     return entry["description"]
+
+
+def recent_meals(conn: sqlite3.Connection, limit: int = 3) -> list[dict[str, Any]]:
+    """The most recent meals (with item names + calories), newest first."""
+    rows = conn.execute(
+        "SELECT id, occurred_at FROM meals ORDER BY occurred_at DESC, id DESC LIMIT ?", (limit,)
+    ).fetchall()
+    result = []
+    for r in rows:
+        items = conn.execute(
+            "SELECT name, calories FROM meal_items WHERE meal_id = ?", (r["id"],)
+        ).fetchall()
+        result.append({"occurred_at": r["occurred_at"], "items": [dict(i) for i in items]})
+    return result
+
+
+def recent_symptoms(conn: sqlite3.Connection, limit: int = 3) -> list[dict[str, Any]]:
+    """The most recent symptom events, newest first."""
+    rows = conn.execute(
+        "SELECT occurred_at, type, severity, duration FROM symptoms "
+        "ORDER BY occurred_at DESC, id DESC LIMIT ?",
+        (limit,),
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def recent_exercises(conn: sqlite3.Connection, limit: int = 3) -> list[dict[str, Any]]:
+    """The most recent exercise events, newest first."""
+    rows = conn.execute(
+        "SELECT occurred_at, type, duration_min, intensity, calories_burned FROM exercises "
+        "ORDER BY occurred_at DESC, id DESC LIMIT ?",
+        (limit,),
+    ).fetchall()
+    return [dict(r) for r in rows]

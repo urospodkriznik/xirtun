@@ -39,6 +39,16 @@ def append_note(path: Path, text: str, *, now: datetime | None = None) -> None:
     path.write_text(content, encoding="utf-8")
 
 
+def recent_notes(path: Path, limit: int = 3) -> list[str]:
+    """The most recent note lines (the '- date: text' entries), oldest-to-newest."""
+    content = read_diet(path)
+    if NOTE_HEADING not in content:
+        return []
+    section = content.split(NOTE_HEADING, 1)[1]
+    notes = [line.strip() for line in section.splitlines() if line.strip().startswith("- ")]
+    return notes[-limit:]
+
+
 def write_diet(path: Path, content: str, *, now: datetime | None = None) -> None:
     now = now or datetime.now().astimezone()
     

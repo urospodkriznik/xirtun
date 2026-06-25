@@ -450,6 +450,13 @@ def test_savemeal_and_log_by_name_expands(conn):
     assert conn.execute("SELECT COUNT(*) AS n FROM meal_items").fetchone()["n"] == 2  # expanded
 
 
+def test_lastmeals_command(conn):
+    diary.save_meal(conn, "x", _meal([{"name": "banana", "calories": 100}]))
+    messenger = FakeMessenger()
+    handle_message("/lastmeals", chat_id="c1", llm=FakeLLM(), conn=conn, messenger=messenger)
+    assert "banana" in messenger.sent[-1]
+
+
 def test_handle_message_other(conn):
     llm = FakeLLM([LLMResponse(data={"intent": "other"})])
     messenger = FakeMessenger()

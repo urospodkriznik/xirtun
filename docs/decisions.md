@@ -199,3 +199,37 @@ because the domain is still being learned.
 **Rationale.** The same dependency-injection seams that allow provider/transport
 swaps make the system fully testable without network or nondeterminism. This is
 the minimum responsible coverage for a personal tool.
+
+---
+
+## ADR-012 — Versioned onboarding questionnaire with top-ups · Accepted
+
+**Context.** Onboarding questions lived as prose inside the LLM prompt, and the
+dispatch gate was binary (run onboarding only while `diet.md` is empty). So a
+question added after a user onboarded would only ever reach new users; an existing
+production profile could never gain it. We also had no way to retire a question and
+clean up the answer it left behind (e.g. a raw `age: 35` once we switched to
+deriving age from year of birth).
+
+**Decision.** Declare the questionnaire as data in
+`pipeline/onboarding_fields.py`: `ONBOARDING_FIELDS` (each with a `since` version)
+and `DEPRECATED_FIELDS` (each with a `removed_in` version). `CURRENT_ONBOARDING_VERSION`
+is derived from the largest version mentioned. A profile records the version it was
+built from in the `kv` table (`onboarding_version`; absent ⇒ treated as v1). The
+same LLM onboarding code drives the top-up: it asks only `fields_since(stored)`,
+strips `removed_since(stored)` from the rewritten `diet.md`, and bumps the version.
+
+**Scheduling.** A top-up never interrupts the user. On each message we first finish
+whatever they started — and only *after* their process is fully complete (no
+meal/symptom left mid-clarification, i.e. no active session) do we open the top-up,
+while they're still online. If their action left a pending session, we try again on
+the next message. `skip` defers the top-up *without* recording the version, so it
+returns next time the user is idle (versus completing it, which bumps the version).
+A retirement-only change (no new questions) is applied silently. Onboarding stays
+LLM-driven and diet.md agent-owned (ADR-008); the registry only supplies the
+version diff the model can't compute.
+
+**Rationale.** Mirrors the additive DB migrations in `storage/db.py` (`_migrate`):
+the schema of *questions* now evolves the same way the schema of *tables* does, so
+the questionnaire can change over the life of a long-running deployment without
+re-interviewing users or orphaning stale answers.

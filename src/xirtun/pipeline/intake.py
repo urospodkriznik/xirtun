@@ -26,11 +26,17 @@ from xirtun.pipeline.classify import classify
 from xirtun.pipeline.exercise import structure_exercise
 from xirtun.pipeline.food import parse_food
 from xirtun.pipeline.onboarding import onboarding_step
+from xirtun.pipeline.onboarding_fields import (
+    CURRENT_ONBOARDING_VERSION,
+    ONBOARDING_FIELDS,
+    fields_since,
+    removed_since,
+)
 from xirtun.pipeline.shopping import suggest_shopping
 from xirtun.pipeline.structure import structure_meal
 from xirtun.pipeline.symptom import structure_symptom
 from xirtun import export, reports, targets
-from xirtun.storage import admin, custom_meals, diary, foods
+from xirtun.storage import admin, custom_meals, db, diary, foods
 
 logger = logging.getLogger(__name__)
 
@@ -47,6 +53,10 @@ HELP_TEXT = (
     "/undo — remove your last entry (asks to confirm)\n"
     "/today — today's meals and totals\n"
     "/week — the past 7 days\n"
+    "/lastmeals — your last 3 meals\n"
+    "/lastsymptoms — your last 3 symptoms\n"
+    "/lastworkouts — your last 3 workouts\n"
+    "/lastnotes — your last 3 notes\n"
     "/shop — suggest a shopping list\n"
     "/food <name>: <per-100g nutrition> — save a food's label\n"
     "/myfood — list your saved foods\n"
@@ -145,6 +155,18 @@ def handle_message(
         return
     if text == "/week":
         messenger.send(reports.week_report(conn, now or datetime.now().astimezone()))
+        return
+    if text == "/lastmeals":
+        messenger.send(reports.recent_meals_report(conn))
+        return
+    if text == "/lastsymptoms":
+        messenger.send(reports.recent_symptoms_report(conn))
+        return
+    if text == "/lastworkouts":
+        messenger.send(reports.recent_exercises_report(conn))
+        return
+    if text == "/lastnotes":
+        messenger.send(reports.recent_notes_report(diet_path) if diet_path else "No notes yet.")
         return
     if text == "/shop":
         _process_shopping(
@@ -604,10 +626,31 @@ def dispatch(
             messenger=messenger, diet_path=diet_path, now=now,
         )
         return
+
+    # If a top-up interview is already underway, the user's reply belongs to it.
+    session = sessions.get_active(conn, chat_id, now=now)
+    if session is not None and session.kind == "onboarding_topup":
+        _continue_topup(
+            text.strip(), chat_id=chat_id, llm=llm, conn=conn, messenger=messenger,
+            diet_path=diet_path, stored=_onboarding_version(conn), now=now,
+        )
+        return
+
+    # Otherwise handle whatever the user actually sent — finish their process first.
     handle_message(
         text, chat_id=chat_id, llm=llm, conn=conn, messenger=messenger,
         diet_path=diet_path, now=now,
     )
+
+    # That done: if their profile is behind AND they're now idle (no meal/symptom
+    # mid-clarification), offer the top-up while they're still online. A leftover
+    # session means their process isn't finished — we'll try again next message.
+    stored = _onboarding_version(conn)
+    if stored < CURRENT_ONBOARDING_VERSION and sessions.get_active(conn, chat_id, now=now) is None:
+        _start_topup(
+            chat_id=chat_id, llm=llm, conn=conn, messenger=messenger,
+            diet_path=diet_path, stored=stored, now=now,
+        )
 
 
 def _process_onboarding(
@@ -624,14 +667,122 @@ def _process_onboarding(
     prior = session.text if session and session.kind == "onboarding" else ""
     transcript = f"{prior}\nUser: {text}".strip()
 
-    step = onboarding_step(llm, transcript)
-    
+    step = onboarding_step(llm, transcript, fields=ONBOARDING_FIELDS)
+
     if not step["done"]:
         sessions.upsert(conn, chat_id, "onboarding", transcript + f"\nAssistant: {step['question']}", now=now)
         messenger.send(step["question"])
     else:
-        memory.write_diet(diet_path, step["diet_markdown"], now=now)
-        if step.get("metrics"):
-            targets.write_metrics(conn, step["metrics"])
+        _commit_onboarding_result(step, conn=conn, diet_path=diet_path, now=now)
         sessions.clear(conn, chat_id)
         messenger.send("Thanks — your profile is saved. You can start logging now.")
+
+
+# --- onboarding version tracking & top-ups ---------------------------------
+
+_ONBOARDING_VERSION_KEY = "onboarding_version"
+
+
+def _onboarding_version(conn: sqlite3.Connection) -> int:
+    """Which onboarding version this profile was built from. Profiles created before
+    versioning existed have no record and are treated as v1 (the baseline)."""
+    raw = db.kv_get(conn, _ONBOARDING_VERSION_KEY)
+    return int(raw) if raw else 1
+
+
+def _set_onboarding_version(conn: sqlite3.Connection, version: int) -> None:
+    db.kv_set(conn, _ONBOARDING_VERSION_KEY, str(version))
+
+
+def _commit_onboarding_result(
+    step: dict[str, Any],
+    *,
+    conn: sqlite3.Connection,
+    diet_path: Path,
+    now: datetime | None = None,
+) -> None:
+    """Persist a finished onboarding/top-up step and record the version it satisfies."""
+    if step.get("diet_markdown"):
+        memory.write_diet(diet_path, step["diet_markdown"], now=now)
+    if step.get("metrics"):
+        # Merge, don't replace: a top-up that answers one metric must not wipe the rest.
+        metrics = targets.read_metrics(conn)
+        metrics.update({k: v for k, v in step["metrics"].items() if v is not None})
+        targets.write_metrics(conn, metrics)
+    _set_onboarding_version(conn, CURRENT_ONBOARDING_VERSION)
+
+
+def _start_topup(
+    *,
+    chat_id: str,
+    llm: LLMClient,
+    conn: sqlite3.Connection,
+    messenger: Messenger,
+    diet_path: Path,
+    stored: int,
+    now: datetime | None = None,
+) -> None:
+    """Kick off a top-up once the user is idle: ask the questions added since
+    ``stored``, strip anything retired since then. Called only when no other
+    process is mid-flight, so it never interrupts a meal or symptom in progress."""
+    new_fields = fields_since(stored)
+    removals = removed_since(stored)
+    existing = memory.read_diet(diet_path)
+
+    # Only retirements, no new questions: clean the profile silently and bump the
+    # version. Nothing to ask, so the user never sees it.
+    if not new_fields:
+        step = onboarding_step(llm, "", fields=[], existing_profile=existing, removals=removals)
+        _commit_onboarding_result(step, conn=conn, diet_path=diet_path, now=now)
+        return
+
+    step = onboarding_step(llm, "", fields=new_fields, existing_profile=existing, removals=removals)
+    if not step["done"]:
+        question = step["question"] or "Could you tell me a bit more?"
+        sessions.upsert(conn, chat_id, "onboarding_topup", f"Assistant: {question}", now=now)
+        messenger.send(
+            "Quick update — I've got a new question or two to sharpen your plan "
+            "(reply 'skip' to do it later).\n" + question
+        )
+    else:
+        _commit_onboarding_result(step, conn=conn, diet_path=diet_path, now=now)
+        messenger.send("Thanks — I've updated your profile.")
+
+
+def _continue_topup(
+    text: str,
+    *,
+    chat_id: str,
+    llm: LLMClient,
+    conn: sqlite3.Connection,
+    messenger: Messenger,
+    diet_path: Path,
+    stored: int,
+    now: datetime | None = None,
+) -> None:
+    """Continue an in-progress top-up: record the answer, ask the next question, or
+    finish. 'skip' defers it WITHOUT recording the version, so it returns next time."""
+    if text.strip().lower() in {"skip", "/skip"}:
+        sessions.clear(conn, chat_id)
+        messenger.send("No problem — I'll ask again another time.")
+        return
+
+    session = sessions.get_active(conn, chat_id, now=now)
+    new_fields = fields_since(stored)
+    removals = removed_since(stored)
+    existing = memory.read_diet(diet_path)
+    transcript = f"{session.text}\nUser: {text}".strip()
+
+    step = onboarding_step(
+        llm, transcript, fields=new_fields, existing_profile=existing, removals=removals,
+    )
+    if not step["done"]:
+        question = step["question"] or "Could you tell me a bit more?"
+        sessions.upsert(
+            conn, chat_id, "onboarding_topup", f"{transcript}\nAssistant: {question}".strip(), now=now,
+        )
+        messenger.send(question)
+    else:
+        _commit_onboarding_result(step, conn=conn, diet_path=diet_path, now=now)
+        sessions.clear(conn, chat_id)
+        messenger.send("Thanks — I've updated your profile.")
