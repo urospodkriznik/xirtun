@@ -247,7 +247,7 @@ def handle_message(
         if not description:
             messenger.send("Usage: /activity <description>  e.g. /activity I train hard 3 days and walk the rest")
         else:
-            _update_activity(description, llm=llm, conn=conn, messenger=messenger)
+            _update_activity(description, llm=llm, conn=conn, messenger=messenger, diet_path=diet_path)
         return
     if text == "/export":
         messenger.send_document(
@@ -620,7 +620,7 @@ def _format_userinfo(conn: sqlite3.Connection, diet_path: Path | None) -> str:
         lines.append(f"Activity: {description} ({level})")
     t = targets.compute(m)
     if t:
-        lines.append(f"Targets: ~{t['calories']} kcal/day, ~{t['protein_g']}g protein/day")
+        lines.append(f"Targets: ~{t['calories']} kcal/day, {t['protein_min_g']}–{t['protein_max_g']}g protein/day")
 
     profile = memory.read_diet(diet_path) if diet_path else ""
     if profile.strip():
@@ -637,31 +637,58 @@ def _update_activity(
     llm: LLMClient,
     conn: sqlite3.Connection,
     messenger: Messenger,
+    diet_path: Path | None = None,
 ) -> None:
-    messages = [
+    # Step 1: classify the description into a standard level.
+    classify_messages = [
         {
             "role": "system",
             "content": (
                 "Classify the user's activity description into one of the five standard "
-                "levels: sedentary, light, moderate, active, very_active. "
-                "sedentary = desk job, little to no exercise. "
-                "light = light exercise 1–3 days/week. "
-                "moderate = moderate exercise 3–5 days/week. "
-                "active = hard exercise most days (≥6 days/week) OR a mix of hard and "
-                "moderate that totals high weekly volume. "
-                "very_active = physically demanding job or twice-a-day training. "
-                "When in doubt between two levels, prefer the lower one. "
+                "levels: sedentary, light, moderate, active, very_active.\n\n"
+                "Method (WHO/ACSM): convert all exercise to moderate-equivalent "
+                "minutes/week — vigorous minutes count double. Then apply:\n"
+                "  sedentary:   0 min/week (desk-bound, no deliberate exercise)\n"
+                "  light:       1–149 min/week\n"
+                "  moderate:    150–299 min/week\n"
+                "  active:      300–599 min/week  (requires muscle-strengthening ≥2 days/week)\n"
+                "  very_active: 600+ min/week\n\n"
+                "Show the minute calculation in the explanation field. "
                 "Respond using the provided schema."
             ),
         },
         {"role": "user", "content": description},
     ]
-    result = llm.complete(messages, schema=ActivityClassification)
+    result = llm.complete(classify_messages, schema=ActivityClassification)
     level = result.data["activity"]
+
+    # Step 2: update the structured metrics blob.
     metrics = targets.read_metrics(conn)
     metrics["activity"] = level
     metrics["activity_description"] = description
     targets.write_metrics(conn, metrics)
+
+    # Step 3: patch diet.md so the profile stays consistent with the metrics.
+    if diet_path is not None:
+        existing = memory.read_diet(diet_path)
+        if existing.strip():
+            patch_messages = [
+                {
+                    "role": "system",
+                    "content": (
+                        "You are editing a user's nutrition profile (Markdown). "
+                        "Update ONLY the activity level information to reflect the new "
+                        f"activity: {description!r} (classified as '{level}'). "
+                        "Keep every other line exactly as-is. "
+                        "Return the complete updated profile text and nothing else."
+                    ),
+                },
+                {"role": "user", "content": existing},
+            ]
+            patched = llm.complete(patch_messages)
+            if patched.text.strip():
+                memory.write_diet(diet_path, patched.text.strip())
+
     messenger.send(
         f"Updated activity to '{level}' — {result.data['explanation']}\n"
         f"New target: {targets.format_targets(targets.read_metrics(conn))}"

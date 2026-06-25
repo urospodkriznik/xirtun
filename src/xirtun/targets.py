@@ -23,6 +23,15 @@ _ACTIVITY_FACTORS = {
     "active": 1.725,
     "very_active": 1.9,
 }
+# Protein range (min g/kg, max g/kg) per activity level.
+# Grounded in WHO + ACSM guidelines: higher training load → higher protein need.
+_PROTEIN_RANGE = {
+    "sedentary":  (1.0, 1.2),
+    "light":      (1.2, 1.4),
+    "moderate":   (1.4, 1.6),
+    "active":     (1.6, 1.8),
+    "very_active":(1.8, 2.0),
+}
 
 
 def read_metrics(conn: sqlite3.Connection) -> dict[str, Any]:
@@ -66,8 +75,12 @@ def compute(metrics: dict[str, Any], today: date | None = None) -> dict[str, int
         + sex_constant
     )
     tdee = bmr * _ACTIVITY_FACTORS.get(metrics["activity"], 1.375)
-    protein = 1.6 * metrics["weight_kg"]  # ~1.6 g/kg, a reasonable active baseline
-    return {"calories": round(tdee), "protein_g": round(protein)}
+    lo, hi = _PROTEIN_RANGE.get(metrics["activity"], (1.4, 1.6))
+    return {
+        "calories": round(tdee),
+        "protein_min_g": round(lo * metrics["weight_kg"]),
+        "protein_max_g": round(hi * metrics["weight_kg"]),
+    }
 
 
 def format_targets(metrics: dict[str, Any]) -> str:
@@ -78,8 +91,9 @@ def format_targets(metrics: dict[str, Any]) -> str:
             "activity). Re-run onboarding to set them, and use /weight to keep your "
             "weight current."
         )
+    protein = f"{targets['protein_min_g']}–{targets['protein_max_g']}g"
     return (
-        f"Maintenance: ~{targets['calories']} kcal/day, ~{targets['protein_g']}g protein/day "
+        f"Maintenance: ~{targets['calories']} kcal/day, {protein} protein/day "
         f"(from {metrics['weight_kg']}kg, {metrics['height_cm']}cm, age {age_from(metrics)}, "
         f"{metrics['activity']}). Your weekly review tailors this to your goals."
     )

@@ -8,7 +8,9 @@ FULL = {"sex": "male", "birth_year": 1994, "height_cm": 180, "weight_kg": 80, "a
 def test_compute_full_metrics():
     t = targets.compute(FULL)
     assert t is not None
-    assert t["protein_g"] == round(1.6 * 80)
+    # moderate activity → 1.4–1.6 g/kg range
+    assert t["protein_min_g"] == round(1.4 * 80)
+    assert t["protein_max_g"] == round(1.6 * 80)
     assert t["calories"] > 1500  # sanity: a plausible maintenance figure
 
 
