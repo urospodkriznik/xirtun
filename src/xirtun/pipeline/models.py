@@ -102,6 +102,14 @@ class Metrics(BaseModel):
     height_cm: float | None = None
     weight_kg: float | None = None
     activity: Literal["sedentary", "light", "moderate", "active", "very_active"] | None = None
+    activity_description: str | None = None  # what the user actually said; shown in /userinfo
+
+
+class ActivityClassification(BaseModel):
+    """LLM output for /activity: map a free-text description to a standard level."""
+
+    activity: Literal["sedentary", "light", "moderate", "active", "very_active"]
+    explanation: str   # one sentence saying why this level fits
 
 
 class OnboardingStep(BaseModel):

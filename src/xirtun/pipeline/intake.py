@@ -32,6 +32,7 @@ from xirtun.pipeline.onboarding_fields import (
     fields_since,
     removed_since,
 )
+from xirtun.pipeline.models import ActivityClassification
 from xirtun.pipeline.shopping import suggest_shopping
 from xirtun.pipeline.structure import structure_meal
 from xirtun.pipeline.symptom import structure_symptom
@@ -67,6 +68,7 @@ HELP_TEXT = (
     "/delmeal <name> — remove a saved meal\n"
     "/target — your daily calorie & protein target\n"
     "/weight <kg> — update your weight\n"
+    "/activity <description> — update your activity level in plain language\n"
     "/export — download your diary as a JSON backup\n"
     "/userinfo — show your profile and body metrics\n"
     "/weekly — run your weekly review now\n"
@@ -239,6 +241,13 @@ def handle_message(
             messenger.send(f"Updated your weight to {float(parts[1]):g} kg.")
         except (IndexError, ValueError):
             messenger.send("Usage: /weight 75")
+        return
+    if text.startswith("/activity"):
+        description = text[len("/activity"):].strip()
+        if not description:
+            messenger.send("Usage: /activity <description>  e.g. /activity I train hard 3 days and walk the rest")
+        else:
+            _update_activity(description, llm=llm, conn=conn, messenger=messenger)
         return
     if text == "/export":
         messenger.send_document(
@@ -590,15 +599,6 @@ def _apply_known_foods(conn: sqlite3.Connection, meal: dict[str, Any]) -> None:
                 item[key] = round(food[key] * factor, 1)
 
 
-_ACTIVITY_LABELS = {
-    "sedentary": "sedentary (desk job, little exercise)",
-    "light": "light (1–3 days/week exercise)",
-    "moderate": "moderate (3–5 days/week exercise)",
-    "active": "active (hard exercise 6–7 days/week)",
-    "very_active": "very active (physical job or twice-a-day training)",
-}
-
-
 def _format_userinfo(conn: sqlite3.Connection, diet_path: Path | None) -> str:
     m = targets.read_metrics(conn)
     lines: list[str] = ["— Metrics —"]
@@ -614,7 +614,10 @@ def _format_userinfo(conn: sqlite3.Connection, diet_path: Path | None) -> str:
     if m.get("weight_kg"):
         lines.append(f"Weight: {m['weight_kg']:g} kg")
     if m.get("activity"):
-        lines.append(f"Activity: {_ACTIVITY_LABELS.get(m['activity'], m['activity'])}")
+        level = m["activity"]
+        # Prefer what the user actually said; fall back to the level name only.
+        description = m.get("activity_description") or level
+        lines.append(f"Activity: {description} ({level})")
     t = targets.compute(m)
     if t:
         lines.append(f"Targets: ~{t['calories']} kcal/day, ~{t['protein_g']}g protein/day")
@@ -626,6 +629,43 @@ def _format_userinfo(conn: sqlite3.Connection, diet_path: Path | None) -> str:
     if len(lines) == 1:  # only the "— Metrics —" header, nothing filled in
         return "No profile yet — just start logging and I'll build one."
     return "\n".join(lines)
+
+
+def _update_activity(
+    description: str,
+    *,
+    llm: LLMClient,
+    conn: sqlite3.Connection,
+    messenger: Messenger,
+) -> None:
+    messages = [
+        {
+            "role": "system",
+            "content": (
+                "Classify the user's activity description into one of the five standard "
+                "levels: sedentary, light, moderate, active, very_active. "
+                "sedentary = desk job, little to no exercise. "
+                "light = light exercise 1–3 days/week. "
+                "moderate = moderate exercise 3–5 days/week. "
+                "active = hard exercise most days (≥6 days/week) OR a mix of hard and "
+                "moderate that totals high weekly volume. "
+                "very_active = physically demanding job or twice-a-day training. "
+                "When in doubt between two levels, prefer the lower one. "
+                "Respond using the provided schema."
+            ),
+        },
+        {"role": "user", "content": description},
+    ]
+    result = llm.complete(messages, schema=ActivityClassification)
+    level = result.data["activity"]
+    metrics = targets.read_metrics(conn)
+    metrics["activity"] = level
+    metrics["activity_description"] = description
+    targets.write_metrics(conn, metrics)
+    messenger.send(
+        f"Updated activity to '{level}' — {result.data['explanation']}\n"
+        f"New target: {targets.format_targets(targets.read_metrics(conn))}"
+    )
 
 
 def dispatch(
