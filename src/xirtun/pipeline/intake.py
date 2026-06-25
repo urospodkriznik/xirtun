@@ -30,7 +30,7 @@ from xirtun.pipeline.shopping import suggest_shopping
 from xirtun.pipeline.structure import structure_meal
 from xirtun.pipeline.symptom import structure_symptom
 from xirtun import export, reports, targets
-from xirtun.storage import admin, diary, foods
+from xirtun.storage import admin, custom_meals, diary, foods
 
 logger = logging.getLogger(__name__)
 
@@ -52,6 +52,9 @@ HELP_TEXT = (
     "/myfood — list your saved foods\n"
     "/checkfood <name> — check if a food is saved\n"
     "/delfood <name> — remove a saved food\n"
+    "/savemeal <name>: <ingredients> — save a recurring meal\n"
+    "/mymeals — list your saved meals\n"
+    "/delmeal <name> — remove a saved meal\n"
     "/target — your daily calorie & protein target\n"
     "/weight <kg> — update your weight\n"
     "/export — download your diary as a JSON backup\n"
@@ -169,6 +172,32 @@ def handle_message(
         else:
             messenger.send(f"No saved food named '{name}'.")
         return
+    if text.startswith("/savemeal"):
+        name, description = _split_name_desc(text[len("/savemeal"):].strip())
+        if name and description:
+            _save_custom_meal(name, description, conn=conn, llm=llm, messenger=messenger, now=now)
+        else:
+            messenger.send("Usage: /savemeal <name>: <ingredients with portions>")
+        return
+    if text == "/mymeals":
+        rows = custom_meals.all_rows(conn)
+        if rows:
+            messenger.send(
+                "Your saved meals:\n"
+                + "\n".join(f"- {r['name']} (~{round(r['calories'] or 0)} kcal)" for r in rows)
+            )
+        else:
+            messenger.send("You haven't saved any custom meals. Use /savemeal to add one.")
+        return
+    if text.startswith("/delmeal"):
+        name = text[len("/delmeal"):].strip()
+        if not name:
+            messenger.send("Usage: /delmeal <name>")
+        elif custom_meals.delete(conn, name):
+            messenger.send(f"Removed saved meal '{name}'.")
+        else:
+            messenger.send(f"No saved meal named '{name}'.")
+        return
     if text.startswith("/food"):
         payload = text[len("/food"):].strip()
         if payload:
@@ -247,7 +276,11 @@ def _process_meal(
     messenger: Messenger,
     now: datetime | None = None,
 ) -> None:
-    draft = structure_meal(llm, text, now=now, known_foods=foods.for_prompt(conn))
+    draft = structure_meal(
+        llm, text, now=now,
+        known_foods=foods.for_prompt(conn),
+        custom_meal_names=custom_meals.names(conn),
+    )
 
     if draft["needs_clarification"]:
         sessions.upsert(conn, chat_id, "meal", text, now=now)
@@ -255,6 +288,7 @@ def _process_meal(
         return
 
     for meal in draft["meals"]:
+        _expand_custom_meals(conn, meal)
         _apply_known_foods(conn, meal)
         diary.save_meal(conn, text, meal, now=now)
     messenger.send(format_ack(draft["meals"]))
@@ -468,6 +502,55 @@ def _food_lookup(conn: sqlite3.Connection, query: str) -> str:
     if not names:
         return f"No saved food matching '{query}'."
     return "Matches:\n" + "\n".join("- " + _food_line(foods.find_by_name(conn, name)) for name in names)
+
+
+def _split_name_desc(payload: str) -> tuple[str, str]:
+    for sep in (":", " — ", " - "):
+        if sep in payload:
+            name, description = payload.split(sep, 1)
+            return name.strip(), description.strip()
+    return payload.strip(), ""
+
+
+def _save_custom_meal(
+    name: str,
+    description: str,
+    *,
+    conn: sqlite3.Connection,
+    llm: LLMClient,
+    messenger: Messenger,
+    now: datetime | None = None,
+) -> None:
+    draft = structure_meal(llm, description, now=now, known_foods=foods.for_prompt(conn))
+    items: list[dict[str, Any]] = []
+    for meal in draft.get("meals", []):
+        _apply_known_foods(conn, meal)
+        items.extend(meal["items"])
+    if not items:
+        messenger.send(
+            "I couldn't parse that meal — include portions, e.g. "
+            "/savemeal breakfast: 75g muesli, 250ml oat milk, 30g protein powder"
+        )
+        return
+    custom_meals.add(conn, name, items, now=now)
+    t = custom_meals.totals(items)
+    messenger.send(
+        f"Saved meal '{name}': {len(items)} items, ~{round(t['calories'])} kcal, "
+        f"{round(t['protein_g'])}g protein. Say \"I ate {name}\" to log it."
+    )
+
+
+def _expand_custom_meals(conn: sqlite3.Connection, meal: dict[str, Any]) -> None:
+    """Replace any item naming a saved custom meal with that meal's stored items."""
+    expanded: list[dict[str, Any]] = []
+    for item in meal["items"]:
+        name = item.get("custom_meal")
+        recipe = custom_meals.find_by_name(conn, name) if name else None
+        if recipe:
+            expanded.extend(recipe["items"])
+        else:
+            expanded.append(item)
+    meal["items"] = expanded
 
 
 def _apply_known_foods(conn: sqlite3.Connection, meal: dict[str, Any]) -> None:

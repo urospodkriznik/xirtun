@@ -423,6 +423,33 @@ def test_undo_includes_exercise(conn):
     assert "exercise" in messenger.sent[-1].lower()
 
 
+def test_savemeal_and_log_by_name_expands(conn):
+    from xirtun.storage import custom_meals
+
+    save_llm = FakeLLM([LLMResponse(data={"needs_clarification": False, "meals": [
+        {"occurred_at": None, "notes": None, "items": [
+            {"name": "muesli", "quantity_g": 75, "calories": 280, "protein_g": 8},
+            {"name": "oat milk", "quantity_g": 250, "calories": 120, "protein_g": 3},
+        ]},
+    ]})])
+    messenger = FakeMessenger()
+    handle_message("/savemeal breakfast cereals: 75g muesli, 250ml oat milk", chat_id="c1", llm=save_llm, conn=conn, messenger=messenger)
+    assert "breakfast cereals" in custom_meals.names(conn)
+    assert "Saved meal" in messenger.sent[-1]
+
+    log_llm = FakeLLM([
+        LLMResponse(data={"intent": "meal"}),
+        LLMResponse(data={"needs_clarification": False, "meals": [
+            {"occurred_at": None, "notes": None,
+             "items": [{"name": "breakfast cereals", "custom_meal": "breakfast cereals"}]},
+        ]}),
+    ])
+    handle_message("I ate breakfast cereals", chat_id="c1", llm=log_llm, conn=conn, messenger=messenger)
+
+    assert conn.execute("SELECT COUNT(*) AS n FROM meals").fetchone()["n"] == 1
+    assert conn.execute("SELECT COUNT(*) AS n FROM meal_items").fetchone()["n"] == 2  # expanded
+
+
 def test_handle_message_other(conn):
     llm = FakeLLM([LLMResponse(data={"intent": "other"})])
     messenger = FakeMessenger()

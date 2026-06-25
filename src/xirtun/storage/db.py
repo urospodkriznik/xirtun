@@ -60,6 +60,17 @@ CREATE TABLE IF NOT EXISTS exercises (
     tags            TEXT
 );
 
+CREATE TABLE IF NOT EXISTS custom_meals (
+    id         INTEGER PRIMARY KEY,
+    name       TEXT NOT NULL UNIQUE,
+    items      TEXT NOT NULL,
+    calories   REAL,
+    protein_g  REAL,
+    fat_g      REAL,
+    carbs_g    REAL,
+    created_at TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS pending (
     chat_id    TEXT PRIMARY KEY,
     kind       TEXT NOT NULL,

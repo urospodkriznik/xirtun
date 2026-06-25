@@ -29,6 +29,7 @@ class Item(BaseModel):
     carbs_g: float | None = None
     tags: list[str] = Field(default_factory=list)
     known_food: str | None = None      # name of a matching saved food, if any
+    custom_meal: str | None = None     # name of a saved custom meal this item stands in for
 
 
 class MealEntry(BaseModel):

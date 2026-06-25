@@ -50,6 +50,11 @@ Python — the agent loop is hand-written, with **no agent framework**.
   (per-100g × grams, or a whole package) instead of being estimated.
 - Duplicate-aware: if a similar food already exists it asks **update / add / cancel**.
 
+**Custom meals (recipes)**
+- Save a recurring meal once — *"/savemeal breakfast cereals: 75g muesli, 250ml oat
+  milk, 30g protein powder"* — then log it later just by name (*"I ate breakfast
+  cereals"*) and it expands to all of its stored items.
+
 **Targets & stats (deterministic — no LLM, no cost)**
 - **Daily calorie + protein targets** computed from your metrics (Mifflin–St Jeor).
 - **`/today`** and **`/week`** summaries with real totals and per-day averages.
@@ -84,6 +89,9 @@ Python — the agent loop is hand-written, with **no agent framework**.
 | `/myfood` | List your saved foods |
 | `/checkfood <name>` | Check whether a food is saved (exact + similar matches) |
 | `/delfood <name>` | Remove a saved food |
+| `/savemeal <name>: <ingredients>` | Save a recurring meal (recipe) |
+| `/mymeals` | List your saved meals |
+| `/delmeal <name>` | Remove a saved meal |
 | `/target` | Your daily calorie & protein target |
 | `/weight <kg>` | Update your weight (keeps targets current) |
 | `/weekly` | Run the weekly review right now |

@@ -12,7 +12,7 @@ import sqlite3
 from datetime import datetime
 from typing import Any
 
-from xirtun.storage import diary, foods
+from xirtun.storage import custom_meals, diary, foods
 
 EXPORT_VERSION = 1
 
@@ -27,6 +27,7 @@ def build_export(conn: sqlite3.Connection, *, now: datetime | None = None) -> di
         "symptoms": diary.all_symptoms(conn),
         "exercises": diary.all_exercises(conn),
         "known_foods": foods.all_rows(conn),
+        "custom_meals": custom_meals.all_rows(conn),
     }
 
 
