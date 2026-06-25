@@ -105,6 +105,42 @@ def test_topup_waits_until_a_pending_process_is_done(conn, tmp_path):
     assert sessions.get_active(conn, "c1").kind == "meal"
 
 
+def test_topup_suspended_by_slash_command(conn, tmp_path):
+    """A slash command during a top-up suspends it (version not bumped), the command
+    runs normally, then the top-up restarts once the user is idle again."""
+    from xirtun.storage import db
+    from xirtun.pipeline.onboarding_fields import CURRENT_ONBOARDING_VERSION
+
+    diet = tmp_path / "diet.md"
+    diet.write_text("# Profile\n- vegan\n")
+    db.kv_set(conn, "onboarding_version", "1")
+    llm = FakeLLM([
+        # first pass: top-up opens
+        LLMResponse(data={"done": False, "question": "Where do you live most of the year?"}),
+        # user sends /today → top-up is suspended; /today needs no LLM call
+        # after /today the user is idle → top-up restarts
+        LLMResponse(data={"done": False, "question": "Where do you live most of the year?"}),
+        # user answers → top-up completes
+        LLMResponse(data={"done": True, "diet_markdown": "# Profile\n- vegan\n- Lives in: Spain\n"}),
+    ])
+    messenger = FakeMessenger()
+
+    dispatch("/today", chat_id="c1", llm=llm, conn=conn, messenger=messenger, diet_path=diet)
+    # /today report came first, then the top-up question
+    assert any("Where do you live" in m for m in messenger.sent)
+    assert db.kv_get(conn, "onboarding_version") != str(CURRENT_ONBOARDING_VERSION)
+
+    # User sends /today again while top-up is waiting — top-up must NOT consume it
+    messenger.sent.clear()
+    dispatch("/today", chat_id="c1", llm=llm, conn=conn, messenger=messenger, diet_path=diet)
+    assert any("Where do you live" in m for m in messenger.sent)
+
+    # Now the user answers the top-up question
+    messenger.sent.clear()
+    dispatch("Spain", chat_id="c1", llm=llm, conn=conn, messenger=messenger, diet_path=diet)
+    assert db.kv_get(conn, "onboarding_version") == str(CURRENT_ONBOARDING_VERSION)
+
+
 def test_topup_skip_defers_without_recording_version(conn, tmp_path):
     from xirtun.storage import db
 

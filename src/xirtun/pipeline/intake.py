@@ -627,14 +627,21 @@ def dispatch(
         )
         return
 
-    # If a top-up interview is already underway, the user's reply belongs to it.
+    # If a top-up interview is already underway, route the reply to it — UNLESS the
+    # user sent a slash command, in which case we suspend the top-up (clear the
+    # session without bumping the version) and handle the command normally. The top-up
+    # will restart from scratch once they're idle again after the command finishes.
     session = sessions.get_active(conn, chat_id, now=now)
     if session is not None and session.kind == "onboarding_topup":
-        _continue_topup(
-            text.strip(), chat_id=chat_id, llm=llm, conn=conn, messenger=messenger,
-            diet_path=diet_path, stored=_onboarding_version(conn), now=now,
-        )
-        return
+        if text.strip().startswith("/"):
+            sessions.clear(conn, chat_id)
+            # fall through to handle_message below
+        else:
+            _continue_topup(
+                text.strip(), chat_id=chat_id, llm=llm, conn=conn, messenger=messenger,
+                diet_path=diet_path, stored=_onboarding_version(conn), now=now,
+            )
+            return
 
     # Otherwise handle whatever the user actually sent — finish their process first.
     handle_message(
