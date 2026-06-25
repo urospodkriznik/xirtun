@@ -68,7 +68,7 @@ HELP_TEXT = (
     "/target — your daily calorie & protein target\n"
     "/weight <kg> — update your weight\n"
     "/export — download your diary as a JSON backup\n"
-    "/profile — show your profile\n"
+    "/userinfo — show your profile and body metrics\n"
     "/weekly — run your weekly review now\n"
     "/cleardata — erase everything (asks to confirm)"
 )
@@ -146,9 +146,8 @@ def handle_message(
     if text == "/help":
         messenger.send(HELP_TEXT)
         return
-    if text == "/profile":
-        profile = memory.read_diet(diet_path) if diet_path else ""
-        messenger.send(profile or "No profile yet — just start logging and I'll build one.")
+    if text in {"/profile", "/userinfo"}:
+        messenger.send(_format_userinfo(conn, diet_path))
         return
     if text == "/today":
         messenger.send(reports.today_report(conn, now or datetime.now().astimezone()))
@@ -589,6 +588,44 @@ def _apply_known_foods(conn: sqlite3.Connection, meal: dict[str, Any]) -> None:
         for key in ("calories", "protein_g", "fat_g", "carbs_g"):
             if food.get(key) is not None:
                 item[key] = round(food[key] * factor, 1)
+
+
+_ACTIVITY_LABELS = {
+    "sedentary": "sedentary (desk job, little exercise)",
+    "light": "light (1–3 days/week exercise)",
+    "moderate": "moderate (3–5 days/week exercise)",
+    "active": "active (hard exercise 6–7 days/week)",
+    "very_active": "very active (physical job or twice-a-day training)",
+}
+
+
+def _format_userinfo(conn: sqlite3.Connection, diet_path: Path | None) -> str:
+    m = targets.read_metrics(conn)
+    lines: list[str] = ["— Metrics —"]
+    if m.get("sex"):
+        lines.append(f"Sex: {m['sex']}")
+    if m.get("birth_year"):
+        age = targets.age_from(m)
+        age_str = f" (age ~{age})" if age else ""
+        month = f"/{m['birth_month']:02d}" if m.get("birth_month") else ""
+        lines.append(f"Born: {m['birth_year']}{month}{age_str}")
+    if m.get("height_cm"):
+        lines.append(f"Height: {m['height_cm']:g} cm")
+    if m.get("weight_kg"):
+        lines.append(f"Weight: {m['weight_kg']:g} kg")
+    if m.get("activity"):
+        lines.append(f"Activity: {_ACTIVITY_LABELS.get(m['activity'], m['activity'])}")
+    t = targets.compute(m)
+    if t:
+        lines.append(f"Targets: ~{t['calories']} kcal/day, ~{t['protein_g']}g protein/day")
+
+    profile = memory.read_diet(diet_path) if diet_path else ""
+    if profile.strip():
+        lines += ["", "— Profile —", profile.strip()]
+
+    if len(lines) == 1:  # only the "— Metrics —" header, nothing filled in
+        return "No profile yet — just start logging and I'll build one."
+    return "\n".join(lines)
 
 
 def dispatch(
