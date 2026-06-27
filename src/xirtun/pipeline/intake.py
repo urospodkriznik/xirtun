@@ -51,6 +51,7 @@ HELP_TEXT = (
     "Commands:\n"
     "/meal — start a new meal entry\n"
     "/exercise — log a workout\n"
+    "/note <text> — save a note or goal for your weekly review\n"
     "/undo — remove your last entry (asks to confirm)\n"
     "/today — today's meals and totals\n"
     "/week — the past 7 days\n"
@@ -132,6 +133,16 @@ def handle_message(
     if text in EXERCISE_COMMANDS:
         sessions.upsert(conn, chat_id, "exercise", "", now=now)
         messenger.send("New exercise — what did you do?")
+        return
+
+    if text.startswith("/note"):
+        payload = text[len("/note"):].strip()
+        if not payload:
+            messenger.send("Usage: /note <anything you want to remember>")
+        elif diet_path is not None:
+            _process_note(payload, diet_path=diet_path, messenger=messenger, now=now)
+        else:
+            messenger.send("Notes aren't available right now.")
         return
 
     if text == "/undo":

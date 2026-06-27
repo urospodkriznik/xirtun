@@ -35,6 +35,7 @@ logger = logging.getLogger(__name__)
 COMMANDS = [
     ("meal", "Start a new meal entry"),
     ("exercise", "Log a workout"),
+    ("note", "Save a note or goal for your weekly review"),
     ("undo", "Remove your last logged entry"),
     ("today", "Today's meals and totals"),
     ("week", "Your past 7 days"),

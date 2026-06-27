@@ -82,9 +82,10 @@ your data in plain files you own, and talks to no one but you and the model prov
 
 | Command | What it does |
 |---|---|
-| *(just type or speak)* | Log a meal/symptom, add a note, ask for a shopping list, or save a food — all in plain language |
+| *(just type or speak)* | Log a meal/symptom/workout, add a note, ask for a shopping list, or save a food — all in plain language |
 | `/meal` | Start a fresh multi-message meal entry |
 | `/exercise` | Log a workout |
+| `/note <text>` | Save a note or goal for your weekly review |
 | `/undo` | Remove your last logged entry (asks to confirm, shows what it'll delete) |
 | `/today` | Today's meals and totals |
 | `/week` | The past 7 days, with per-day averages |
