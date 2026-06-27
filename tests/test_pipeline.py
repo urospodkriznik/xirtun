@@ -367,6 +367,32 @@ def test_food_duplicate_cancel_saves_nothing(conn):
     assert foods.find_by_name(conn, "myway vegan falafels")["calories"] == 214    # unchanged
 
 
+def test_meal_item_stores_sugar(conn):
+    diary.save_meal(conn, "soda", _meal([{"name": "cola", "carbs_g": 39, "sugar_g": 39}]))
+    row = conn.execute("SELECT carbs_g, sugar_g FROM meal_items").fetchone()
+    assert row["carbs_g"] == 39
+    assert row["sugar_g"] == 39
+
+
+def test_known_food_stores_and_shows_sugar(conn):
+    from xirtun.storage import foods
+    foods.add(conn, {"name": "Cola", "calories": 42, "carbs_g": 10.6, "sugar_g": 10.6})
+    assert foods.find_by_name(conn, "Cola")["sugar_g"] == 10.6
+    messenger = FakeMessenger()
+    handle_message("/myfood", chat_id="c1", llm=FakeLLM(), conn=conn, messenger=messenger)
+    assert "S11" in messenger.sent[-1]   # sugar rendered in the food line
+
+
+def test_custom_meal_totals_sugar(conn):
+    from xirtun.storage import custom_meals
+    custom_meals.add(conn, "snack", [
+        {"name": "cookie", "carbs_g": 20, "sugar_g": 12},
+        {"name": "juice", "carbs_g": 25, "sugar_g": 22},
+    ])
+    row = conn.execute("SELECT sugar_g FROM custom_meals WHERE name = 'snack'").fetchone()
+    assert row["sugar_g"] == 34
+
+
 def test_delfood_removes(conn):
     from xirtun.storage import foods
     foods.add(conn, {"name": "Tofu", "calories": 120})
@@ -374,6 +400,62 @@ def test_delfood_removes(conn):
     handle_message("/delfood Tofu", chat_id="c1", llm=FakeLLM(), conn=conn, messenger=messenger)
     assert "Tofu" not in foods.names(conn)
     assert "Removed" in messenger.sent[-1]
+
+
+def test_delfood_suggests_closest_then_confirms(conn):
+    from xirtun.storage import foods
+    foods.add(conn, {"name": "Trader Joe's cookies", "calories": 480})
+    messenger = FakeMessenger()
+
+    handle_message("/delfood trader joe cookies", chat_id="c1", llm=FakeLLM(), conn=conn, messenger=messenger)
+    assert "Did you mean 'Trader Joe's cookies'?" in messenger.sent[-1]
+    assert "Trader Joe's cookies" in foods.names(conn)            # not yet removed
+
+    handle_message("yes", chat_id="c1", llm=FakeLLM(), conn=conn, messenger=messenger)
+    assert "Trader Joe's cookies" not in foods.names(conn)
+    assert "Removed" in messenger.sent[-1]
+
+
+def test_delfood_suggestion_cancelled(conn):
+    from xirtun.storage import foods
+    foods.add(conn, {"name": "Trader Joe's cookies", "calories": 480})
+    messenger = FakeMessenger()
+
+    handle_message("/delfood trader joe cookies", chat_id="c1", llm=FakeLLM(), conn=conn, messenger=messenger)
+    handle_message("nope", chat_id="c1", llm=FakeLLM(), conn=conn, messenger=messenger)
+
+    assert "Trader Joe's cookies" in foods.names(conn)            # kept
+    assert "Cancelled" in messenger.sent[-1]
+
+
+def test_delfood_no_match_at_all(conn):
+    messenger = FakeMessenger()
+    handle_message("/delfood pizza", chat_id="c1", llm=FakeLLM(), conn=conn, messenger=messenger)
+    assert "No saved food named 'pizza'." in messenger.sent[-1]
+
+
+def test_undo_includes_saved_food(conn):
+    from xirtun.storage import foods
+    foods.add(conn, {"name": "Tofu", "calories": 120})
+    messenger = FakeMessenger()
+
+    handle_message("/undo", chat_id="c1", llm=FakeLLM(), conn=conn, messenger=messenger)
+    assert "saved food: Tofu" in messenger.sent[-1]
+
+    handle_message("yes", chat_id="c1", llm=FakeLLM(), conn=conn, messenger=messenger)
+    assert "Tofu" not in foods.names(conn)
+
+
+def test_undo_includes_saved_meal(conn):
+    from xirtun.storage import custom_meals
+    custom_meals.add(conn, "lunch", [{"name": "rice", "calories": 200}])
+    messenger = FakeMessenger()
+
+    handle_message("/undo", chat_id="c1", llm=FakeLLM(), conn=conn, messenger=messenger)
+    assert "saved meal: lunch" in messenger.sent[-1]
+
+    handle_message("yes", chat_id="c1", llm=FakeLLM(), conn=conn, messenger=messenger)
+    assert "lunch" not in custom_meals.names(conn)
 
 
 def _exercise(type_, **kw):

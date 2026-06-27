@@ -32,6 +32,7 @@ CREATE TABLE IF NOT EXISTS meal_items (
     protein_g  REAL,
     fat_g      REAL,
     carbs_g    REAL,
+    sugar_g    REAL,
     tags       TEXT
 );
 
@@ -68,6 +69,7 @@ CREATE TABLE IF NOT EXISTS custom_meals (
     protein_g  REAL,
     fat_g      REAL,
     carbs_g    REAL,
+    sugar_g    REAL,
     created_at TEXT NOT NULL
 );
 
@@ -96,6 +98,7 @@ CREATE TABLE IF NOT EXISTS known_foods (
     protein_g  REAL,
     fat_g      REAL,
     carbs_g    REAL,
+    sugar_g    REAL,
     fiber_g    REAL,
     package_g  REAL,
     tags       TEXT,
@@ -121,10 +124,15 @@ def init_db(db_path: Path) -> None:
 
 def _migrate(conn: sqlite3.Connection) -> None:
     """Add columns introduced after an existing database may already have been created."""
-    columns = {row["name"] for row in conn.execute("PRAGMA table_info(known_foods)")}
-    for column in ("package_g", "fiber_g"):
-        if column not in columns:
-            conn.execute(f"ALTER TABLE known_foods ADD COLUMN {column} REAL")
+    def add_missing(table: str, new_columns: tuple[str, ...]) -> None:
+        existing = {row["name"] for row in conn.execute(f"PRAGMA table_info({table})")}
+        for column in new_columns:
+            if column not in existing:
+                conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} REAL")
+
+    add_missing("known_foods", ("package_g", "fiber_g", "sugar_g"))
+    add_missing("meal_items", ("sugar_g",))
+    add_missing("custom_meals", ("sugar_g",))
 
 
 # --- key/value helpers (e.g. the Telegram update offset) ---

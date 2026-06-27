@@ -45,7 +45,7 @@ def save_meal(
 
     for item in meal["items"]:
         conn.execute(
-            "INSERT INTO meal_items (meal_id, name, quantity_g, calories, protein_g, fat_g, carbs_g, tags) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO meal_items (meal_id, name, quantity_g, calories, protein_g, fat_g, carbs_g, sugar_g, tags) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 meal_id,
                 item["name"],
@@ -54,6 +54,7 @@ def save_meal(
                 item.get("protein_g"),
                 item.get("fat_g"),
                 item.get("carbs_g"),
+                item.get("sugar_g"),
                 json.dumps(item.get("tags", [])),
             ),
         )
@@ -123,7 +124,7 @@ def meals_since(conn: sqlite3.Connection, since_iso: str) -> list[dict[str, Any]
     result = []
     for r in rows:
         items = conn.execute(
-            "SELECT name, calories, protein_g, fat_g, carbs_g, tags "
+            "SELECT name, calories, protein_g, fat_g, carbs_g, sugar_g, tags "
             "FROM meal_items WHERE meal_id = ?",
             (r["id"],),
         ).fetchall()
@@ -159,7 +160,7 @@ def all_meals(conn: sqlite3.Connection) -> list[dict[str, Any]]:
     result = []
     for r in rows:
         items = conn.execute(
-            "SELECT name, quantity_g, calories, protein_g, fat_g, carbs_g, tags "
+            "SELECT name, quantity_g, calories, protein_g, fat_g, carbs_g, sugar_g, tags "
             "FROM meal_items WHERE meal_id = ? ORDER BY id",
             (r["id"],),
         ).fetchall()
@@ -195,7 +196,9 @@ def _item_with_tags(row: sqlite3.Row) -> dict[str, Any]:
 
 
 def last_entry(conn: sqlite3.Connection) -> dict[str, Any] | None:
-    """The most recently logged entry (meal or symptom), without deleting it."""
+    """The most recent entry the user created — a logged meal/symptom/exercise, or a
+    saved food/meal — without deleting it. Saved items compare by created_at so /undo
+    can take back a /food or /savemeal the same way it takes back a logged meal."""
     meal = conn.execute(
         "SELECT id, logged_at, raw_text FROM meals ORDER BY logged_at DESC, id DESC LIMIT 1"
     ).fetchone()
@@ -205,22 +208,38 @@ def last_entry(conn: sqlite3.Connection) -> dict[str, Any] | None:
     exercise = conn.execute(
         "SELECT id, logged_at, type FROM exercises ORDER BY logged_at DESC, id DESC LIMIT 1"
     ).fetchone()
+    food = conn.execute(
+        "SELECT id, created_at, name FROM known_foods ORDER BY created_at DESC, id DESC LIMIT 1"
+    ).fetchone()
+    saved_meal = conn.execute(
+        "SELECT id, created_at, name FROM custom_meals ORDER BY created_at DESC, id DESC LIMIT 1"
+    ).fetchone()
 
     candidates = []
     if meal is not None:
-        candidates.append(("meal", _parse_dt(meal["logged_at"]), meal["id"], meal["raw_text"]))
+        candidates.append(("meal", _parse_dt(meal["logged_at"]), meal["id"], f"meal: {meal['raw_text']}"))
     if symptom is not None:
-        candidates.append(("symptom", _parse_dt(symptom["logged_at"]), symptom["id"], symptom["type"]))
+        candidates.append(("symptom", _parse_dt(symptom["logged_at"]), symptom["id"], f"symptom: {symptom['type']}"))
     if exercise is not None:
-        candidates.append(("exercise", _parse_dt(exercise["logged_at"]), exercise["id"], exercise["type"]))
+        candidates.append(("exercise", _parse_dt(exercise["logged_at"]), exercise["id"], f"exercise: {exercise['type']}"))
+    if food is not None:
+        candidates.append(("food", _parse_dt(food["created_at"]), food["id"], f"saved food: {food['name']}"))
+    if saved_meal is not None:
+        candidates.append(("saved_meal", _parse_dt(saved_meal["created_at"]), saved_meal["id"], f"saved meal: {saved_meal['name']}"))
     if not candidates:
         return None
 
     kind, _, entry_id, description = max(candidates, key=lambda c: c[1])
-    return {"kind": kind, "id": entry_id, "description": f"{kind}: {description}"}
+    return {"kind": kind, "id": entry_id, "description": description}
 
 
-_TABLES = {"meal": "meals", "symptom": "symptoms", "exercise": "exercises"}
+_TABLES = {
+    "meal": "meals",
+    "symptom": "symptoms",
+    "exercise": "exercises",
+    "food": "known_foods",
+    "saved_meal": "custom_meals",
+}
 
 
 def delete_entry(conn: sqlite3.Connection, kind: str, entry_id: int) -> None:

@@ -11,7 +11,7 @@ import sqlite3
 from datetime import datetime
 from typing import Any
 
-_MACROS = ("calories", "protein_g", "fat_g", "carbs_g")
+_MACROS = ("calories", "protein_g", "fat_g", "carbs_g", "sugar_g")
 
 
 def totals(items: list[dict[str, Any]]) -> dict[str, float]:
@@ -27,11 +27,12 @@ def add(conn: sqlite3.Connection, name: str, items: list[dict[str, Any]], *, now
     now = now or datetime.now().astimezone()
     t = totals(items)
     conn.execute(
-        "INSERT INTO custom_meals (name, items, calories, protein_g, fat_g, carbs_g, created_at) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?) "
+        "INSERT INTO custom_meals (name, items, calories, protein_g, fat_g, carbs_g, sugar_g, created_at) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?) "
         "ON CONFLICT(name) DO UPDATE SET items = excluded.items, calories = excluded.calories, "
-        "protein_g = excluded.protein_g, fat_g = excluded.fat_g, carbs_g = excluded.carbs_g",
-        (name, json.dumps(items), t["calories"], t["protein_g"], t["fat_g"], t["carbs_g"], now.isoformat()),
+        "protein_g = excluded.protein_g, fat_g = excluded.fat_g, carbs_g = excluded.carbs_g, "
+        "sugar_g = excluded.sugar_g",
+        (name, json.dumps(items), t["calories"], t["protein_g"], t["fat_g"], t["carbs_g"], t["sugar_g"], now.isoformat()),
     )
     conn.commit()
 

@@ -54,7 +54,7 @@ ONBOARDING_FIELDS: list[Field] = [
     {"key": "goals",         "since": 1, "target": "profile", "question": "What are your health or nutrition goals?"},
     # --- version 2 ---
     {"key": "residence",     "since": 2, "target": "profile", "question": "Where do you live for the majority of the year?"},
-    # --- version 2 ---
+    # --- version 3 ---
     {"key": "birth_year",    "since": 3, "target": "metrics", "question": "What year were you born? (the month is a bonus)"},
 ]
 

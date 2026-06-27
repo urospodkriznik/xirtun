@@ -27,6 +27,7 @@ class Item(BaseModel):
     protein_g: float | None = None
     fat_g: float | None = None
     carbs_g: float | None = None
+    sugar_g: float | None = None       # sugars, a subset of carbs
     tags: list[str] = Field(default_factory=list)
     known_food: str | None = None      # name of a matching saved food, if any
     custom_meal: str | None = None     # name of a saved custom meal this item stands in for
@@ -131,6 +132,10 @@ class FoodRegistration(BaseModel):
     fat_g: float | None = Field(default=None, description="grams of fat per 100g")
     carbs_g: float | None = Field(
         default=None, description="grams of carbohydrate per 100g (also called 'carbs' or 'ch')"
+    )
+    sugar_g: float | None = Field(
+        default=None,
+        description="grams of sugars per 100g, a subset of carbs (often labelled 'of which sugars')",
     )
     fiber_g: float | None = Field(
         default=None, description="grams of fibre per 100g (also called 'fibre' or 'fibra')"

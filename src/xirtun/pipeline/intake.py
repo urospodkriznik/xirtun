@@ -79,7 +79,7 @@ HELP_TEXT = (
 def format_ack(meals: list[dict[str, Any]]) -> str:
     """Confirmation summarizing the meal(s) logged, with per-item and total macros."""
     item_lines = []
-    totals = {"calories": 0.0, "protein_g": 0.0, "fat_g": 0.0, "carbs_g": 0.0}
+    totals = {"calories": 0.0, "protein_g": 0.0, "fat_g": 0.0, "carbs_g": 0.0, "sugar_g": 0.0}
     for meal in meals:
         for item in meal["items"]:
             for key in totals:
@@ -91,7 +91,8 @@ def format_ack(meals: list[dict[str, Any]]) -> str:
     header = "Logged:" if len(meals) == 1 else f"Logged {len(meals)} meals:"
     total = (
         f"Total: ~{round(totals['calories'])} kcal — {round(totals['protein_g'])}g protein, "
-        f"{round(totals['fat_g'])}g fat, {round(totals['carbs_g'])}g carbs."
+        f"{round(totals['fat_g'])}g fat, {round(totals['carbs_g'])}g carbs "
+        f"(incl. {round(totals['sugar_g'])}g sugar)."
     )
     return f"{header}\n" + "\n".join(item_lines) + f"\n{total}"
 
@@ -193,7 +194,16 @@ def handle_message(
         elif foods.delete(conn, name):
             messenger.send(f"Removed '{name}' from your saved foods.")
         else:
-            messenger.send(f"No saved food named '{name}'.")
+            # No exact match — offer the closest saved food, if any, for confirmation.
+            similar = foods.search(conn, name)
+            if similar:
+                sessions.upsert(conn, chat_id, "delfood_confirm", similar[0], now=now)
+                messenger.send(
+                    f"No saved food named '{name}'. Did you mean '{similar[0]}'?\n"
+                    "Reply 'yes' to delete it, or anything else to cancel."
+                )
+            else:
+                messenger.send(f"No saved food named '{name}'.")
         return
     if text.startswith("/savemeal"):
         name, description = _split_name_desc(text[len("/savemeal"):].strip())
@@ -265,6 +275,9 @@ def handle_message(
             return
         if session.kind == "undo_confirm":
             _resolve_undo(session, text, chat_id=chat_id, conn=conn, messenger=messenger)
+            return
+        if session.kind == "delfood_confirm":
+            _resolve_delfood(session, text, chat_id=chat_id, conn=conn, messenger=messenger)
             return
         combined = f"{session.text}\n{text}".strip()
         if session.kind == "symptom":
@@ -504,6 +517,22 @@ def _resolve_undo(
         messenger.send("Cancelled. Nothing was removed.")
 
 
+def _resolve_delfood(
+    session,
+    answer: str,
+    *,
+    chat_id: str,
+    conn: sqlite3.Connection,
+    messenger: Messenger,
+) -> None:
+    name = session.text
+    sessions.clear(conn, chat_id)
+    if answer.strip().lower().startswith("y") and foods.delete(conn, name):
+        messenger.send(f"Removed '{name}' from your saved foods.")
+    else:
+        messenger.send("Cancelled. Nothing was removed.")
+
+
 def _food_macro(value: float | None) -> int:
     return round(value) if value is not None else 0
 
@@ -515,6 +544,8 @@ def _food_line(food: dict[str, Any]) -> str:
         f"F{_food_macro(food.get('fat_g'))} "
         f"C{_food_macro(food.get('carbs_g'))}"
     )
+    if food.get("sugar_g") is not None:
+        macros += f" S{_food_macro(food.get('sugar_g'))}"
     if food.get("fiber_g") is not None:
         macros += f" Fb{_food_macro(food.get('fiber_g'))}"
     parts.append(f"({macros})")
@@ -594,7 +625,7 @@ def _apply_known_foods(conn: sqlite3.Connection, meal: dict[str, Any]) -> None:
         if food is None:
             continue
         factor = quantity / 100.0
-        for key in ("calories", "protein_g", "fat_g", "carbs_g"):
+        for key in ("calories", "protein_g", "fat_g", "carbs_g", "sugar_g"):
             if food.get(key) is not None:
                 item[key] = round(food[key] * factor, 1)
 

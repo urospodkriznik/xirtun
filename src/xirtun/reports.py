@@ -10,7 +10,7 @@ from typing import Any
 from xirtun.memory import diet as memory_diet
 from xirtun.storage import diary
 
-_MACROS = ("calories", "protein_g", "fat_g", "carbs_g")
+_MACROS = ("calories", "protein_g", "fat_g", "carbs_g", "sugar_g")
 
 
 def _totals(meals: list[dict[str, Any]]) -> dict[str, float]:
@@ -32,7 +32,7 @@ def today_report(conn: sqlite3.Connection, now: datetime) -> str:
     lines = [
         f"Today — {len(meals)} meal(s), ~{round(t['calories'])} kcal "
         f"({round(t['protein_g'])}g protein, {round(t['fat_g'])}g fat, "
-        f"{round(t['carbs_g'])}g carbs):"
+        f"{round(t['carbs_g'])}g carbs incl. {round(t['sugar_g'])}g sugar):"
     ]
     for meal in meals:
         names = ", ".join(item["name"] for item in meal["items"])
