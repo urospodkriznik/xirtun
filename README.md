@@ -1,12 +1,12 @@
 # xirtun
 
-A personal nutrition assistant you talk to over **Telegram**. Log meals and symptoms
-in plain language — by text *or* voice — and xirtun estimates nutrition, remembers
-your profile, learns the foods you buy, and once a week proactively messages you with
-patterns, risks, and concrete suggestions it found in your own data.
+A personal nutrition assistant you talk to over **Telegram**. Log meals, symptoms,
+and workouts in plain language — by text *or* voice — and xirtun estimates nutrition,
+remembers your profile, learns the foods you buy, and once a week proactively messages
+you with patterns, risks, and concrete suggestions it found in your own data.
 
-It's single-user, runs on your own machine or a small VM, and is written in plain
-Python — the agent loop is hand-written, with **no agent framework**.
+It's single-user and self-hosted: it runs on your own machine or a small VM, keeps all
+your data in plain files you own, and talks to no one but you and the model provider.
 
 > **Disclaimer:** xirtun is a personal, informational tool — not a medical device.
 > Its nutrition figures are rough estimates and its observations are not medical
@@ -19,9 +19,10 @@ Python — the agent loop is hand-written, with **no agent framework**.
 
 **Logging (text or voice, in plain language)**
 - **Meals** — *"leftover curry, ~2 cups, and a beer"* becomes structured, timestamped
-  items with estimated calories and macros. Composite foods are broken into
-  ingredients (a sandwich → bread, chicken, mayo, lettuce) and tagged with likely
-  allergens/sensitivities (dairy, gluten, soy, egg, nuts, FODMAP, …).
+  items with estimated calories and macros (protein, fat, carbs incl. sugars).
+  Composite foods are broken into ingredients (a sandwich → bread, chicken, mayo,
+  lettuce) and tagged with likely allergens/sensitivities (dairy, gluten, soy, egg,
+  nuts, FODMAP, …).
 - **Symptoms** — *"I've been bloated since this morning"* → a structured, timestamped
   symptom with optional severity and duration.
 - **Exercise** — *"ran 5k this morning"* or *"45 min of legs at the gym"* → a
@@ -40,7 +41,9 @@ Python — the agent loop is hand-written, with **no agent framework**.
   level, allergies, conditions, family history, diet style, supplements, and goals.
 - Add to it anytime as a **note** — *"I want to gain muscle"*, *"I exercise twice a
   week"*, *"I want more lutein"* — and the weekly review factors it in.
-- The agent merges new facts in over time and snapshots the old version before each
+- Update your **weight** (`/weight`) or describe your **activity level** in plain words
+  (`/activity I train hard 3 days and walk the rest`); targets recompute automatically.
+- New facts are merged in over time and the old version is snapshotted before each
   rewrite (so nothing is silently lost).
 
 **Custom food database**
@@ -80,7 +83,8 @@ Python — the agent loop is hand-written, with **no agent framework**.
 | Command | What it does |
 |---|---|
 | *(just type or speak)* | Log a meal/symptom, add a note, ask for a shopping list, or save a food — all in plain language |
-| `/meal`, `/new` | Start a fresh multi-message meal entry |
+| `/meal` | Start a fresh multi-message meal entry |
+| `/exercise` | Log a workout |
 | `/undo` | Remove your last logged entry (asks to confirm, shows what it'll delete) |
 | `/today` | Today's meals and totals |
 | `/week` | The past 7 days, with per-day averages |
@@ -95,8 +99,9 @@ Python — the agent loop is hand-written, with **no agent framework**.
 | `/delmeal <name>` | Remove a saved meal |
 | `/target` | Your daily calorie & protein target |
 | `/weight <kg>` | Update your weight (keeps targets current) |
+| `/activity <description>` | Update your activity level in plain language (recomputes targets) |
 | `/weekly` | Run the weekly review right now |
-| `/profile` | Show your profile (`diet.md`) |
+| `/userinfo` | Show your profile and body metrics |
 | `/export` | Export your full diary (meals, symptoms, foods) as JSON |
 | `/cleardata` | Erase all your data (asks to confirm) |
 | `/help` | What I can do |
@@ -110,7 +115,7 @@ Two loops, deliberately separated:
 - **Hot path** (every inbound message): a deterministic state machine —
   `classify → clarify? → structure → store`. The cheap model handles intent
   classification and structuring; commands and stats are pure Python (no model calls).
-- **Weekly review**: a hand-written, ReAct-style **agent loop** that's given tools
+- **Weekly review**: a ReAct-style **agent loop** that's given tools
   (`query_diary`, read/write `observations`, read/update the profile, `get_targets`)
   and autonomously decides which to call, what to conclude, and whether to message you
   at all. The scheduler only *triggers* it — the decisions live in the loop.
@@ -172,7 +177,7 @@ it.
 ## Testing
 
 ```bash
-uv run pytest        # ~80 tests, fully offline
+uv run pytest        # ~100 tests, fully offline
 uv run ruff check    # lint
 ```
 
@@ -206,7 +211,7 @@ docs/                product, architecture, decisions, roadmap
 
 Python 3.12 · [uv](https://docs.astral.sh/uv/) · Google Gemini (`google-genai`) ·
 `httpx` · `APScheduler` · `pydantic` · SQLite (stdlib) · `pytest` · `ruff`. Synchronous
-throughout; no async, no web framework, no agent framework.
+throughout; no async and no web framework.
 
 ## Status
 

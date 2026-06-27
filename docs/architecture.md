@@ -86,7 +86,7 @@ on IncomingMessage:
 ```
 
 Pending-meal boundaries:
-- Explicit start: user sends `/meal` (or `/new`).
+- Explicit start: user sends `/meal`.
 - Safety nets, because the user will forget: (a) a pending session auto-closes
   after ~30 min of inactivity; (b) the classifier may return `meal` (new) rather
   than `continue_meal`, which closes the previous session automatically.

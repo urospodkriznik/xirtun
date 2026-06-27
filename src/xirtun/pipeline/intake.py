@@ -41,7 +41,7 @@ from xirtun.storage import admin, custom_meals, db, diary, foods
 
 logger = logging.getLogger(__name__)
 
-MEAL_COMMANDS = {"/meal", "/new"}
+MEAL_COMMANDS = {"/meal"}
 EXERCISE_COMMANDS = {"/exercise", "/workout"}
 
 HELP_TEXT = (
