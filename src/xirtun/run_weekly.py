@@ -29,7 +29,7 @@ logger = logging.getLogger(__name__)
 
 # A successful review within this window suppresses scheduled and catch-up runs, so a
 # manual run and the cron firing (or a boot-time catch-up) can't double-fire the week.
-MIN_INTERVAL = timedelta(days=6)
+MIN_INTERVAL = timedelta(days=7)
 
 
 def run_weekly_review(

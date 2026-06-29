@@ -37,7 +37,8 @@ TOOLS_DOC = (
     "- read_observations() -> your own prior notes (observations.md)\n"
     "- write_observations(content:str) -> replace your notes with an updated, concise summary\n"
     "- update_diet(content:str) -> replace the profile (read it first; merge, never drop facts)\n"
-    "- get_targets() -> the user's computed daily calorie & protein targets\n"
+    "- get_targets() -> the user's computed daily calorie & protein targets (an ESTIMATE)\n"
+    "- get_weight_trend(days:int=56) -> the user's logged weight trend over the window\n"
 )
 
 
@@ -113,4 +114,7 @@ def build_dispatch(ctx: ToolContext) -> dict[str, Callable[[dict[str, Any]], str
         "write_observations": lambda a: _write_observations(ctx, a),
         "update_diet": lambda a: _update_diet(ctx, a),
         "get_targets": lambda a: targets.format_targets(targets.read_metrics(ctx.conn)),
+        "get_weight_trend": lambda a: targets.format_weight_trend(
+            ctx.conn, now=ctx.now, days=int(a.get("days", 56))
+        ),
     }

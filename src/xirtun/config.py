@@ -25,6 +25,7 @@ class Config:
     strong_model: str
     data_dir: Path
     weekly_cron: str
+    weight_reminder_cron: str
     timezone: tzinfo
 
 
@@ -59,6 +60,9 @@ def load_config() -> Config:
         cheap_model=os.environ.get("LLM_CHEAP_MODEL", "gemini-2.5-flash-lite"),
         strong_model=os.environ.get("LLM_STRONG_MODEL", "gemini-2.5-pro"),
         data_dir=data_dir,
-        weekly_cron=os.environ.get("WEEKLY_CRON", "0 9 * * 0"),
+        weekly_cron=os.environ.get("WEEKLY_CRON", "0 17 * * *"),
+        # Morning check; should fire earlier in the day than WEEKLY_CRON so the nudge
+        # lands the morning of the review.
+        weight_reminder_cron=os.environ.get("WEIGHT_REMINDER_CRON", "0 8 * * *"),
         timezone=timezone,
     )

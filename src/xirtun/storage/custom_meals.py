@@ -60,3 +60,20 @@ def delete(conn: sqlite3.Connection, name: str) -> bool:
     cursor = conn.execute("DELETE FROM custom_meals WHERE lower(name) = lower(?)", (name,))
     conn.commit()
     return cursor.rowcount > 0
+
+
+def _tokens(text: str) -> set[str]:
+    return {word.rstrip("s") for word in text.lower().split() if len(word) >= 4}
+
+
+def search(conn: sqlite3.Connection, query: str) -> list[str]:
+    """Saved meal names that share a significant word with `query` (excluding exact match)."""
+    wanted = _tokens(query)
+    matches = []
+    for row in conn.execute("SELECT name FROM custom_meals"):
+        name = row["name"]
+        if name.lower() == query.lower():
+            continue
+        if wanted & _tokens(name):
+            matches.append(name)
+    return matches

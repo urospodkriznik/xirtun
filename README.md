@@ -64,10 +64,16 @@ your data in plain files you own, and talks to no one but you and the model prov
 
 **Proactive help**
 - **Weekly autonomous review** — a tool-using agent reviews your recent diary, your
-  profile, your targets, and its own past notes, then sends a short message with
-  non-obvious patterns and **actionable** suggestions, framed as things to look into
-  or raise with a doctor — never a diagnosis. It can also ask you a question when it
-  needs more context. Runs on a schedule and on demand.
+  profile, your targets, your **weight trend**, and its own past notes, then sends a
+  **structured report** (overview, energy & macros, nutrient wins, watch-outs,
+  actions, questions) with non-obvious patterns and **actionable** suggestions, framed
+  as things to look into or raise with a doctor — never a diagnosis. It treats the
+  calorie target as an *estimate* and reconciles it against your weight trend and goal,
+  so it won't tell you to eat more while your weight is steady or rising. It can also
+  ask you a question when it needs more context. Runs on a schedule and on demand.
+- **Weight-log reminder** — on the morning your weekly review is due, if you haven't
+  logged a weight in the last 6 days, it nudges you to send `/weight` so the review can
+  judge your calories against the scale instead of just a formula.
 - **Shopping-list assistant** — *"heading to the shop, what should I grab?"* →
   suggestions drawn from your goals, recent diet, and gaps (and it won't suggest what
   you already ate this week).
@@ -98,7 +104,7 @@ your data in plain files you own, and talks to no one but you and the model prov
 | `/savemeal <name>: <ingredients>` | Save a recurring meal (recipe) |
 | `/mymeals` | List your saved meals |
 | `/delmeal <name>` | Remove a saved meal |
-| `/target` | Your daily calorie & protein target |
+| `/target` | Your daily calorie & protein target, plus your recent weight trend |
 | `/weight <kg>` | Update your weight (keeps targets current) |
 | `/activity <description>` | Update your activity level in plain language (recomputes targets) |
 | `/weekly` | Run the weekly review right now |
@@ -156,7 +162,8 @@ cp .env.example .env   # then fill in the values
 | `LLM_CHEAP_MODEL` | Hot-path model (default `gemini-2.5-flash-lite`; `gemini-2.5-flash` is more reliable for structured output and audio) |
 | `LLM_STRONG_MODEL` | Weekly-review model (default `gemini-2.5-pro`) |
 | `TIMEZONE` | IANA name, e.g. `Europe/Ljubljana` — used to interpret meal times |
-| `WEEKLY_CRON` | Weekly-review schedule (default `0 9 * * 0`, Sunday 09:00) |
+| `WEEKLY_CRON` | When to check for the weekly review (default `0 17 * * *`, daily at 17:00 — runs if 7 days have passed since the last review) |
+| `WEIGHT_REMINDER_CRON` | When to check whether to nudge for a weight log (default `0 8 * * *`, daily at 08:00 — only nudges on the morning the review is due and if no weight was logged in 6 days; keep earlier than `WEEKLY_CRON`) |
 | `DATA_DIR` | Where the SQLite DB and Markdown files live (default `./data`) |
 
 Everything in `DATA_DIR` (`xirtun.db`, `diet.md`, `observations.md`, `diet.history/`)
@@ -167,6 +174,7 @@ is created at runtime and is gitignored — never committed.
 ```bash
 uv run python -m xirtun.main          # the bot: long-polling + in-process weekly scheduler
 uv run python -m xirtun.run_weekly    # run the weekly review once, now
+uv run python -m xirtun.run_reminder  # send the weight-log reminder now (if it's due)
 ```
 
 Shortcuts are also available via the `Makefile` (`make dev`, `make weekly`,
@@ -193,7 +201,8 @@ src/xirtun/
   config.py          env-driven configuration, validated at startup
   main.py            bot entrypoint (intake + scheduler + command menu)
   run_weekly.py      weekly-review entrypoint (guarded + idempotent)
-  scheduler.py       APScheduler weekly trigger
+  run_reminder.py    morning weight-log reminder (fires the day the review is due)
+  scheduler.py       APScheduler weekly + weight-reminder triggers
   reports.py         deterministic /today and /week reports
   targets.py         calorie/protein targets (Mifflin–St Jeor)
   export.py          /export diary dump

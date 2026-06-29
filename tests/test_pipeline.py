@@ -268,11 +268,17 @@ def test_shop_command(conn, tmp_path):
 
 
 def test_target_command(conn):
+    from datetime import datetime, timedelta, timezone
+
     from xirtun import targets
     targets.write_metrics(conn, {"sex": "female", "birth_year": 1994, "height_cm": 165, "weight_kg": 60, "activity": "light"})
+    now = datetime(2026, 6, 29, 8, 0, tzinfo=timezone.utc)
+    targets.update_weight(conn, 60.5, now=now - timedelta(days=14))
+    targets.update_weight(conn, 60.0, now=now)
     messenger = FakeMessenger()
-    handle_message("/target", chat_id="c1", llm=FakeLLM(), conn=conn, messenger=messenger)
+    handle_message("/target", chat_id="c1", llm=FakeLLM(), conn=conn, messenger=messenger, now=now)
     assert "kcal" in messenger.sent[-1]
+    assert "trend" in messenger.sent[-1].lower()  # weight trend appended
 
 
 def test_weight_command_updates_metric(conn):
@@ -391,6 +397,47 @@ def test_custom_meal_totals_sugar(conn):
     ])
     row = conn.execute("SELECT sugar_g FROM custom_meals WHERE name = 'snack'").fetchone()
     assert row["sugar_g"] == 34
+
+
+def test_delmeal_removes(conn):
+    from xirtun.storage import custom_meals
+    custom_meals.add(conn, "morning oats", [{"name": "oats", "calories": 300}])
+    messenger = FakeMessenger()
+    handle_message("/delmeal morning oats", chat_id="c1", llm=FakeLLM(), conn=conn, messenger=messenger)
+    assert "morning oats" not in custom_meals.names(conn)
+    assert "Removed" in messenger.sent[-1]
+
+
+def test_delmeal_suggests_closest_then_confirms(conn):
+    from xirtun.storage import custom_meals
+    custom_meals.add(conn, "morning oats", [{"name": "oats", "calories": 300}])
+    messenger = FakeMessenger()
+
+    handle_message("/delmeal morning", chat_id="c1", llm=FakeLLM(), conn=conn, messenger=messenger)
+    assert "Did you mean 'morning oats'?" in messenger.sent[-1]
+    assert "morning oats" in custom_meals.names(conn)
+
+    handle_message("yes", chat_id="c1", llm=FakeLLM(), conn=conn, messenger=messenger)
+    assert "morning oats" not in custom_meals.names(conn)
+    assert "Removed" in messenger.sent[-1]
+
+
+def test_delmeal_suggestion_cancelled(conn):
+    from xirtun.storage import custom_meals
+    custom_meals.add(conn, "morning oats", [{"name": "oats", "calories": 300}])
+    messenger = FakeMessenger()
+
+    handle_message("/delmeal morning", chat_id="c1", llm=FakeLLM(), conn=conn, messenger=messenger)
+    handle_message("nope", chat_id="c1", llm=FakeLLM(), conn=conn, messenger=messenger)
+
+    assert "morning oats" in custom_meals.names(conn)
+    assert "Cancelled" in messenger.sent[-1]
+
+
+def test_delmeal_no_match_at_all(conn):
+    messenger = FakeMessenger()
+    handle_message("/delmeal pizza", chat_id="c1", llm=FakeLLM(), conn=conn, messenger=messenger)
+    assert "No saved meal named 'pizza'." in messenger.sent[-1]
 
 
 def test_delfood_removes(conn):

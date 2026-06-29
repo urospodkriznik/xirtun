@@ -77,25 +77,50 @@ HELP_TEXT = (
 )
 
 
+def _fmt_occurred(occurred_at: str | None) -> str:
+    """Format an occurred_at ISO string as a short 'HH:MM' or 'Mon DD HH:MM' label."""
+    if not occurred_at:
+        return ""
+    try:
+        dt = datetime.fromisoformat(occurred_at)
+        from datetime import date
+        if dt.date() == date.today():
+            return dt.strftime("%H:%M")
+        return dt.strftime("%b %d %H:%M")
+    except ValueError:
+        return ""
+
+
 def format_ack(meals: list[dict[str, Any]]) -> str:
     """Confirmation summarizing the meal(s) logged, with per-item and total macros."""
-    item_lines = []
-    totals = {"calories": 0.0, "protein_g": 0.0, "fat_g": 0.0, "carbs_g": 0.0, "sugar_g": 0.0}
+    all_totals = {"calories": 0.0, "protein_g": 0.0, "fat_g": 0.0, "carbs_g": 0.0, "sugar_g": 0.0}
+    lines = []
+    header = "Logged:" if len(meals) == 1 else f"Logged {len(meals)} meals:"
+    lines.append(header)
     for meal in meals:
+        t = _fmt_occurred(meal.get("occurred_at"))
+        if t and len(meals) > 1:
+            lines.append(f"  {t}")
         for item in meal["items"]:
-            for key in totals:
-                totals[key] += item.get(key) or 0
-            item_lines.append(
+            for key in all_totals:
+                all_totals[key] += item.get(key) or 0
+            lines.append(
                 f"- {item['name']} (~{round(item.get('calories') or 0)} kcal, "
                 f"{round(item.get('protein_g') or 0)}g protein)"
             )
-    header = "Logged:" if len(meals) == 1 else f"Logged {len(meals)} meals:"
+    time_str = ""
+    if len(meals) == 1:
+        t = _fmt_occurred(meals[0].get("occurred_at"))
+        if t:
+            time_str = f" at {t}"
     total = (
-        f"Total: ~{round(totals['calories'])} kcal — {round(totals['protein_g'])}g protein, "
-        f"{round(totals['fat_g'])}g fat, {round(totals['carbs_g'])}g carbs "
-        f"(incl. {round(totals['sugar_g'])}g sugar)."
+        f"Total{time_str}: ~{round(all_totals['calories'])} kcal — "
+        f"{round(all_totals['protein_g'])}g protein, "
+        f"{round(all_totals['fat_g'])}g fat, {round(all_totals['carbs_g'])}g carbs "
+        f"(incl. {round(all_totals['sugar_g'])}g sugar)."
     )
-    return f"{header}\n" + "\n".join(item_lines) + f"\n{total}"
+    lines.append(total)
+    return "\n".join(lines)
 
 
 def format_symptom_ack(symptoms: list[dict[str, Any]]) -> str:
@@ -103,6 +128,9 @@ def format_symptom_ack(symptoms: list[dict[str, Any]]) -> str:
     parts = []
     for s in symptoms:
         extra = []
+        t = _fmt_occurred(s.get("occurred_at"))
+        if t:
+            extra.append(t)
         if s.get("severity"):
             extra.append(f"severity {s['severity']}/5")
         if s.get("duration"):
@@ -240,7 +268,15 @@ def handle_message(
         elif custom_meals.delete(conn, name):
             messenger.send(f"Removed saved meal '{name}'.")
         else:
-            messenger.send(f"No saved meal named '{name}'.")
+            similar = custom_meals.search(conn, name)
+            if similar:
+                sessions.upsert(conn, chat_id, "delmeal_confirm", similar[0], now=now)
+                messenger.send(
+                    f"No saved meal named '{name}'. Did you mean '{similar[0]}'?\n"
+                    "Reply 'yes' to delete it, or anything else to cancel."
+                )
+            else:
+                messenger.send(f"No saved meal named '{name}'.")
         return
     if text.startswith("/food"):
         payload = text[len("/food"):].strip()
@@ -253,12 +289,16 @@ def handle_message(
             )
         return
     if text == "/target":
-        messenger.send(targets.format_targets(targets.read_metrics(conn)))
+        messenger.send(
+            targets.format_targets(targets.read_metrics(conn))
+            + "\n\n"
+            + targets.format_weight_trend(conn, now=now)
+        )
         return
     if text.startswith("/weight"):
         parts = text.split()
         try:
-            targets.update_weight(conn, float(parts[1]))
+            targets.update_weight(conn, float(parts[1]), now=now)
             messenger.send(f"Updated your weight to {float(parts[1]):g} kg.")
         except (IndexError, ValueError):
             messenger.send("Usage: /weight 75")
@@ -289,6 +329,9 @@ def handle_message(
             return
         if session.kind == "delfood_confirm":
             _resolve_delfood(session, text, chat_id=chat_id, conn=conn, messenger=messenger)
+            return
+        if session.kind == "delmeal_confirm":
+            _resolve_delmeal(session, text, chat_id=chat_id, conn=conn, messenger=messenger)
             return
         combined = f"{session.text}\n{text}".strip()
         if session.kind == "symptom":
@@ -375,6 +418,9 @@ def format_exercise_ack(exercises: list[dict[str, Any]]) -> str:
     parts = []
     for e in exercises:
         details = []
+        t = _fmt_occurred(e.get("occurred_at"))
+        if t:
+            details.append(t)
         if e.get("duration_min"):
             details.append(f"{round(e['duration_min'])} min")
         if e.get("intensity"):
@@ -540,6 +586,22 @@ def _resolve_delfood(
     sessions.clear(conn, chat_id)
     if answer.strip().lower().startswith("y") and foods.delete(conn, name):
         messenger.send(f"Removed '{name}' from your saved foods.")
+    else:
+        messenger.send("Cancelled. Nothing was removed.")
+
+
+def _resolve_delmeal(
+    session,
+    answer: str,
+    *,
+    chat_id: str,
+    conn: sqlite3.Connection,
+    messenger: Messenger,
+) -> None:
+    name = session.text
+    sessions.clear(conn, chat_id)
+    if answer.strip().lower().startswith("y") and custom_meals.delete(conn, name):
+        messenger.send(f"Removed saved meal '{name}'.")
     else:
         messenger.send("Cancelled. Nothing was removed.")
 

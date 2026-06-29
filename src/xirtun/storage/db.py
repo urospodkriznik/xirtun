@@ -90,6 +90,12 @@ CREATE TABLE IF NOT EXISTS runs (
 
 CREATE TABLE IF NOT EXISTS kv (k TEXT PRIMARY KEY, v TEXT);
 
+CREATE TABLE IF NOT EXISTS weight_log (
+    id          INTEGER PRIMARY KEY,
+    occurred_at TEXT NOT NULL,
+    weight_kg   REAL NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS known_foods (
     id         INTEGER PRIMARY KEY,
     name       TEXT NOT NULL UNIQUE,

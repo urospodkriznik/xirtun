@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from datetime import date
+from datetime import date, datetime, timedelta
 from typing import Any
 
 from xirtun.storage import db
@@ -43,10 +43,57 @@ def write_metrics(conn: sqlite3.Connection, metrics: dict[str, Any]) -> None:
     db.kv_set(conn, _METRICS_KEY, json.dumps(metrics))
 
 
-def update_weight(conn: sqlite3.Connection, weight_kg: float) -> None:
+def update_weight(conn: sqlite3.Connection, weight_kg: float, now: datetime | None = None) -> None:
+    """Set the current weight AND append a dated entry to weight_log, so the weekly
+    review can read the trend (the real arbiter of whether calorie targets are right)."""
     metrics = read_metrics(conn)
     metrics["weight_kg"] = weight_kg
     write_metrics(conn, metrics)
+    occurred_at = (now or datetime.now()).isoformat()
+    conn.execute(
+        "INSERT INTO weight_log (occurred_at, weight_kg) VALUES (?, ?)",
+        (occurred_at, weight_kg),
+    )
+    conn.commit()
+
+
+def weight_history(conn: sqlite3.Connection, since_iso: str) -> list[dict[str, Any]]:
+    """Logged weights at or after ``since_iso``, oldest first."""
+    rows = conn.execute(
+        "SELECT occurred_at, weight_kg FROM weight_log WHERE occurred_at >= ? "
+        "ORDER BY occurred_at ASC",
+        (since_iso,),
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def format_weight_trend(conn: sqlite3.Connection, now: datetime | None = None, days: int = 56) -> str:
+    """Human-readable weight trend over the last ``days`` for the weekly agent: the
+    first and latest logged weight, net change, and approximate weekly rate."""
+    now = now or datetime.now()
+    since = (now - timedelta(days=days)).isoformat()
+    history = weight_history(conn, since)
+    if not history:
+        return (
+            f"No weights logged in the last {days} days. Without a trend, the calorie "
+            "target below is only an ESTIMATE — ask the user to log /weight regularly so "
+            "intake can be judged against reality, not the formula."
+        )
+    if len(history) == 1:
+        h = history[0]
+        return f"Only one weight logged ({h['weight_kg']:g}kg on {h['occurred_at'][:10]}). Not enough for a trend yet."
+
+    first, last = history[0], history[-1]
+    delta = last["weight_kg"] - first["weight_kg"]
+    span_days = max(1, (datetime.fromisoformat(last["occurred_at"]) - datetime.fromisoformat(first["occurred_at"])).days)
+    per_week = delta / span_days * 7
+    direction = "down" if delta < 0 else ("up" if delta > 0 else "flat")
+    return (
+        f"Weight trend ({len(history)} entries over {span_days}d): "
+        f"{first['weight_kg']:g}kg → {last['weight_kg']:g}kg "
+        f"({delta:+.1f}kg, ~{per_week:+.2f}kg/week, {direction}). "
+        "Treat this trend — not the formula — as the truth about whether intake is too high or too low."
+    )
 
 
 def age_from(metrics: dict[str, Any], today: date | None = None) -> int | None:
