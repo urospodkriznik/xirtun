@@ -330,6 +330,27 @@ def test_known_food_overrides_macros(conn):
     assert row["protein_g"] == 36   # 18/100 * 200
 
 
+def test_known_food_match_renames_to_saved_name(conn):
+    """The confirmation shows the real saved product's name, not whatever generic
+    name the model used — so a wrong match is visible instead of hidden."""
+    from xirtun.storage import foods
+    foods.add(conn, {"name": "combino chickpeas pasta", "calories": 228, "protein_g": 14, "fat_g": 3, "carbs_g": 38, "tags": []})
+    llm = FakeLLM([
+        LLMResponse(data={"intent": "meal"}),
+        LLMResponse(data={"needs_clarification": False, "meals": [
+            {"occurred_at": None, "notes": None, "items": [
+                {"name": "spinach pasta", "known_food": "combino chickpeas pasta", "quantity_g": 200, "calories": 300},
+            ]},
+        ]}),
+    ])
+    messenger = FakeMessenger()
+    handle_message("plate of spinach pasta", chat_id="c1", llm=llm, conn=conn, messenger=messenger)
+
+    assert "combino chickpeas pasta" in messenger.sent[-1]
+    row = conn.execute("SELECT name FROM meal_items").fetchone()
+    assert row["name"] == "combino chickpeas pasta"
+
+
 def test_myfood_lists_saved(conn):
     from xirtun.storage import foods
     foods.add(conn, {"name": "Tofu", "calories": 120, "protein_g": 12})

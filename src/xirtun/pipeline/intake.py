@@ -701,6 +701,10 @@ def _apply_known_foods(conn: sqlite3.Connection, meal: dict[str, Any]) -> None:
         for key in ("calories", "protein_g", "fat_g", "carbs_g", "sugar_g"):
             if food.get(key) is not None:
                 item[key] = round(food[key] * factor, 1)
+        # Show the saved product's real name, not whatever the model called it — so a
+        # wrong match (e.g. generic "pasta" pulling in a specific saved brand) is
+        # visible in the confirmation instead of hiding behind an unbranded label.
+        item["name"] = food["name"]
 
 
 def _format_userinfo(conn: sqlite3.Connection, diet_path: Path | None) -> str:
