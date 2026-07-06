@@ -22,7 +22,8 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from xirtun.llm.base import LLMClient
 from xirtun.messaging.base import Messenger
 from xirtun.memory import diet as memory
-from xirtun.pipeline import sessions
+from xirtun.memory import observations
+from xirtun.pipeline import sessions, weekly_qa
 from xirtun.pipeline.classify import classify
 from xirtun.pipeline.exercise import structure_exercise
 from xirtun.pipeline.food import parse_food
@@ -41,6 +42,11 @@ from xirtun import export, reports, targets
 from xirtun.storage import admin, custom_meals, db, diary, foods
 
 logger = logging.getLogger(__name__)
+
+# Words that bail out of a stuck meal/symptom/exercise clarification loop — without
+# this, a description the structurer can never quite parse traps every subsequent
+# message (even ones unrelated to it) until the 30-minute session timeout elapses.
+CANCEL_WORDS = {"cancel", "nevermind", "never mind", "stop"}
 
 MEAL_COMMANDS = {"/meal"}
 EXERCISE_COMMANDS = {"/exercise", "/workout"}
@@ -151,6 +157,7 @@ def handle_message(
     conn: sqlite3.Connection,
     messenger: Messenger,
     diet_path: Path | None = None,
+    observations_path: Path | None = None,
     now: datetime | None = None,
 ) -> None:
     text = text.strip()
@@ -327,7 +334,11 @@ def handle_message(
         return
 
     # 2) Mid-session: continue whatever we were collecting (meal or symptom).
-    session = sessions.get_active(conn, chat_id, now=now)
+    # weekly_qa sessions get a much longer timeout (a held report must survive the
+    # user being away for a day or two) — peek the kind first so the right one applies.
+    pending_kind = sessions.peek_kind(conn, chat_id)
+    timeout = weekly_qa.TIMEOUT if pending_kind == weekly_qa.KIND else sessions.TIMEOUT
+    session = sessions.get_active(conn, chat_id, now=now, timeout=timeout)
     if session is not None:
         if session.kind == "food_confirm":
             _resolve_food_confirm(session, text, chat_id=chat_id, conn=conn, messenger=messenger)
@@ -341,6 +352,18 @@ def handle_message(
         if session.kind == "delmeal_confirm":
             _resolve_delmeal(session, text, chat_id=chat_id, conn=conn, messenger=messenger)
             return
+        if session.kind == weekly_qa.KIND:
+            qa = weekly_qa.get(conn, chat_id, now=now)
+            if qa is not None:
+                _resolve_weekly_qa(
+                    qa, text, chat_id=chat_id, llm=llm, conn=conn, messenger=messenger,
+                    diet_path=diet_path, observations_path=observations_path, now=now,
+                )
+            return
+        if session.kind in {"meal", "symptom", "exercise"} and text.strip().lower() in CANCEL_WORDS:
+            sessions.clear(conn, chat_id)
+            messenger.send("Cancelled — nothing logged.")
+            return
         combined = f"{session.text}\n{text}".strip()
         if session.kind == "symptom":
             _process_symptom(combined, chat_id=chat_id, llm=llm, conn=conn, messenger=messenger, now=now)
@@ -353,6 +376,25 @@ def handle_message(
     # 3) No session: classify fresh and route.
     intent = classify(llm, text)
     logger.info("intent=%s", intent)
+    _route_intent(
+        intent, text, chat_id=chat_id, llm=llm, conn=conn, messenger=messenger,
+        diet_path=diet_path, now=now,
+    )
+
+
+def _route_intent(
+    intent: str,
+    text: str,
+    *,
+    chat_id: str,
+    llm: LLMClient,
+    conn: sqlite3.Connection,
+    messenger: Messenger,
+    diet_path: Path | None,
+    now: datetime | None = None,
+) -> None:
+    """Dispatch a classified message to its processor. Shared by fresh classification
+    (section 3 above) and by weekly_qa's "this looks like a log, not an answer" path."""
     if intent == "meal":
         _process_meal(text, chat_id=chat_id, llm=llm, conn=conn, messenger=messenger, now=now)
     elif intent == "symptom":
@@ -370,6 +412,68 @@ def handle_message(
             "I'm not sure what that was — tell me what you ate, how you're feeling, "
             "what exercise you did, or a goal/note to remember."
         )
+
+
+_LOG_INTENTS = {"meal", "symptom", "exercise", "food", "shopping"}
+
+
+def _resolve_weekly_qa(
+    qa: weekly_qa.WeeklyQA,
+    text: str,
+    *,
+    chat_id: str,
+    llm: LLMClient,
+    conn: sqlite3.Connection,
+    messenger: Messenger,
+    diet_path: Path | None,
+    observations_path: Path | None,
+    now: datetime | None,
+) -> None:
+    """Handle a reply while a weekly Q&A is pending: 'done'/'skip' finalizes it; a
+    message that classifies as an actual log (meal/symptom/exercise/food/shopping) is
+    processed normally and the open question(s) are re-shown afterward (resume-on-
+    interrupt); anything else is treated as an answer and accumulated."""
+    if weekly_qa.is_done_word(text):
+        _finalize_weekly_qa(qa, chat_id=chat_id, conn=conn, messenger=messenger,
+                             observations_path=observations_path, now=now)
+        return
+
+    intent = classify(llm, text)
+    if intent in _LOG_INTENTS:
+        _route_intent(intent, text, chat_id=chat_id, llm=llm, conn=conn, messenger=messenger,
+                       diet_path=diet_path, now=now)
+        # The processor above unconditionally clears or replaces the chat's ONE pending
+        # slot — if it opened its own clarification, restore the weekly_qa session
+        # (the held report/answers-so-far matter more than one nested follow-up) and
+        # say so plainly; either way, remind them the questions are still open.
+        after = sessions.get_active(conn, chat_id, now=now)
+        if after is not None and after.kind != weekly_qa.KIND:
+            messenger.send("That needs a bit more detail — try logging it again once we finish these questions.")
+        weekly_qa.persist(conn, chat_id, qa, now=now)
+        messenger.send(weekly_qa.format_reminder(qa.questions))
+        return
+
+    weekly_qa.record_answer(conn, chat_id, qa, text, now=now)
+    if qa.mode == "interactive":
+        messenger.send("Got it. Anything else, or send 'skip'/'done' to see your report?")
+    else:
+        messenger.send("Noted — thanks! (send 'done' any time to close this out)")
+
+
+def _finalize_weekly_qa(
+    qa: weekly_qa.WeeklyQA,
+    *,
+    chat_id: str,
+    conn: sqlite3.Connection,
+    messenger: Messenger,
+    observations_path: Path | None,
+    now: datetime | None,
+) -> None:
+    if qa.mode == "interactive" and qa.report:
+        messenger.send(qa.report)
+    if observations_path is not None:
+        observations.append(observations_path, weekly_qa.format_note(qa.questions, qa.answers))
+    weekly_qa.clear(conn, chat_id)
 
 
 def _process_meal(
@@ -846,6 +950,7 @@ def dispatch(
     conn: sqlite3.Connection,
     messenger: Messenger,
     diet_path: Path,
+    observations_path: Path | None = None,
     weekly_cb: Callable[[], None] | None = None,
     on_timezone_change: Callable[[tzinfo], None] | None = None,
     now: datetime | None = None,
@@ -864,6 +969,12 @@ def dispatch(
         messenger.send("All data cleared. Send me anything to start fresh.")
         return
     if command == "/weekly" and weekly_cb is not None:
+        if sessions.peek_kind(conn, chat_id) == weekly_qa.KIND:
+            messenger.send(
+                "You've still got questions open from the last review — reply to "
+                "those (or send 'skip') before running another one."
+            )
+            return
         messenger.send("Running your weekly review now…")
         weekly_cb()
         return
@@ -899,7 +1010,7 @@ def dispatch(
     # Otherwise handle whatever the user actually sent — finish their process first.
     handle_message(
         text, chat_id=chat_id, llm=llm, conn=conn, messenger=messenger,
-        diet_path=diet_path, now=now,
+        diet_path=diet_path, observations_path=observations_path, now=now,
     )
 
     # That done: if their profile is behind AND they're now idle (no meal/symptom

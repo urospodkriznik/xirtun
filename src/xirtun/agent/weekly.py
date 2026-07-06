@@ -6,7 +6,7 @@ scheduler only *triggers* the run; the decision-making lives in the loop below.
 
 The loop is provider-agnostic: each turn the model returns an AgentAction (via
 structured output), and we either run the chosen tool and feed the result back, or
-finish and send the final message.
+finish and return the report (sending is the caller's job — see WeeklyResult).
 """
 
 from __future__ import annotations
@@ -16,10 +16,10 @@ import logging
 import sqlite3
 from datetime import datetime, tzinfo
 from pathlib import Path
+from typing import NamedTuple
 
 from xirtun.agent.tools import TOOLS_DOC, ToolContext, build_dispatch
 from xirtun.llm.base import LLMClient
-from xirtun.messaging.base import Messenger
 from xirtun.pipeline.models import AgentAction
 
 logger = logging.getLogger(__name__)
@@ -82,15 +82,20 @@ WEEKLY_SYSTEM = (
     "  • Nutrient wins — what's well covered and which foods are driving it.\n"
     "  • Watch-outs — gaps, risks, and any symptom↔food / symptom↔timing patterns.\n"
     "  • Actions — 2-4 concrete, prioritised changes for next week.\n"
-    "  • Questions — ask one or two ONLY if a plausible answer would change next week's "
-    "analysis or advice. Prefer questions that RESOLVE a discrepancy you raised or "
-    "CALIBRATE an uncertain number, and say briefly WHY you're asking. E.g. when intake "
-    "and the weight trend conflict, ask about hunger/satiety and how completely they log "
-    "(oils, drinks, snacks, portion sizes) — that distinguishes under-logging from a "
-    "lower true maintenance and helps dial in a healthy target. Skip generic check-ins "
-    "whose answers wouldn't change anything. Replies come back as notes for next time.\n"
-    "Be comprehensive but not padded — every line should carry information. If the week is "
-    "genuinely uneventful, a shorter check-in is fine.\n"
+    "Do NOT include a 'Questions' section in final_message — put calibrating questions "
+    "in the separate `questions` field instead (see below). Be comprehensive but not "
+    "padded — every line should carry information. If the week is genuinely uneventful, "
+    "a shorter check-in is fine.\n"
+    "\n"
+    "QUESTIONS (separate `questions` field, set only when finishing): include one or two "
+    "ONLY if a plausible answer would change next week's analysis or advice. Prefer "
+    "questions that RESOLVE a discrepancy you raised or CALIBRATE an uncertain number, "
+    "and say briefly WHY you're asking in the question itself. E.g. when intake and the "
+    "weight trend conflict, ask about hunger/satiety and how completely they log (oils, "
+    "drinks, snacks, portion sizes) — that distinguishes under-logging from a lower true "
+    "maintenance and helps dial in a healthy target. Skip generic check-ins whose answers "
+    "wouldn't change anything; leave `questions` empty if none qualify. The app presents "
+    "these separately and their replies come back as notes for next time.\n"
     "\n"
     "MEMORY: after analysing, rewrite observations.md as a concise running summary (keep "
     "durable facts, don't let it grow forever). You may update diet.md ONLY to add new "
@@ -106,19 +111,29 @@ WEEKLY_SYSTEM = (
 )
 
 
+class WeeklyResult(NamedTuple):
+    """The agent's output for one run: the report body and any calibrating questions.
+
+    Sending is NOT this module's job — the caller (run_weekly.py) decides timing: hold
+    the report for /weekly until questions are answered, or send it immediately and
+    follow up for a scheduled run. `report` is "" if there's nothing worth sending.
+    """
+
+    report: str
+    questions: list[str]
+
+
 def run_weekly(
     *,
     llm: LLMClient,
     conn: sqlite3.Connection,
     diet_path: Path,
     observations_path: Path,
-    messenger: Messenger,
     tz: tzinfo,
     now: datetime | None = None,
     max_iters: int = 8,
-) -> str | None:
-    """Run one weekly review. Returns the message sent (or None if it sent nothing /
-    ran out of iterations)."""
+) -> WeeklyResult:
+    """Run one weekly review's analysis. Does not send anything — see WeeklyResult."""
     now = now or datetime.now(tz)
     ctx = ToolContext(conn=conn, diet_path=diet_path, observations_path=observations_path, now=now)
     dispatch = build_dispatch(ctx)
@@ -132,12 +147,11 @@ def run_weekly(
         action = llm.complete(messages, schema=AgentAction).data
         logger.info("weekly action: tool=%s thought=%s", action.get("tool"), action.get("thought"))
         messages.append({"role": "assistant", "content": json.dumps(action)})
-        
+
         if not action.get("tool"):
             final = (action.get("final_message") or "").strip()
-            if final:
-                messenger.send(final)
-            return final
+            questions = [q for q in (action.get("questions") or []) if q and q.strip()]
+            return WeeklyResult(report=final, questions=questions)
         else:
             args = json.loads(action.get("args_json") or "{}")
             result = _run_tool(dispatch, action["tool"], args)
@@ -145,7 +159,7 @@ def run_weekly(
             continue
 
     logger.warning("weekly run hit max_iters (%d) without finishing", max_iters)
-    return None
+    return WeeklyResult(report="", questions=[])
 
 
 def _run_tool(dispatch, name: str, args: dict) -> str:

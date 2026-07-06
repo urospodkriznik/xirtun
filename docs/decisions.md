@@ -115,6 +115,9 @@ a `restart` policy (needed anyway), idempotency via a `runs` table, and a
 startup catch-up check. Cloud Scheduler adds endpoints/auth/HTTP for no benefit
 at one user. Splitting to cron later requires no change to `run_weekly()`.
 
+*Update (ADR-013):* the immediate startup catch-up described here was removed —
+see ADR-013 for why.
+
 ---
 
 ## ADR-007 — Messenger abstraction; long-polling; raw Bot API · Accepted
@@ -233,3 +236,27 @@ version diff the model can't compute.
 the schema of *questions* now evolves the same way the schema of *tables* does, so
 the questionnaire can change over the life of a long-running deployment without
 re-interviewing users or orphaning stale answers.
+
+---
+
+## ADR-013 — Drop the immediate startup catch-up for the weekly review · Accepted
+
+**Context.** ADR-006 added a synchronous catch-up call right after `start_scheduler`
+at boot: if a review was overdue, it fired immediately, at whatever wall-clock hour
+the process happened to restart. In practice, a restart (e.g. deploying a change)
+at 3am fired the review at 3am — the catch-up had no notion of a sane hour, only
+"is it overdue."
+
+**Decision.** Remove the immediate catch-up call. `start_scheduler`'s `CronTrigger`
+already computes its next fire time as the next match strictly after the moment it's
+created — today's `WEEKLY_CRON` time if the process starts before it, tomorrow's
+otherwise. That's sufficient on its own: a review overdue at boot simply waits for
+that next tick, arriving at a normal hour instead of whenever the process happened
+to restart.
+
+**Rationale.** The original worry (ADR-006) was a review silently missed forever if
+a restart straddled the exact cron tick. But even without the immediate catch-up,
+the cron trigger still fires within one day of boot in the worst case — a bounded
+delay proportional to how long the process was actually down, not an indefinite
+loss. That's an acceptable, expected trade for a single-user personal deployment,
+and it's strictly better than surprising the user with a report at 3am.

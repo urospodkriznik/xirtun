@@ -16,13 +16,14 @@ import sqlite3
 from datetime import datetime, timedelta, tzinfo
 from pathlib import Path
 
-from xirtun.agent.weekly import run_weekly
+from xirtun.agent.weekly import WeeklyResult, run_weekly
 from xirtun.config import Config, load_config
 from xirtun.llm.base import LLMClient
 from xirtun.llm.gemini import GeminiClient
 from xirtun.logging_setup import setup_logging
 from xirtun.messaging.base import Messenger
 from xirtun.messaging.telegram import TelegramMessenger
+from xirtun.pipeline import weekly_qa
 from xirtun.storage import db, runs
 
 logger = logging.getLogger(__name__)
@@ -30,6 +31,29 @@ logger = logging.getLogger(__name__)
 # A successful review within this window suppresses scheduled and catch-up runs, so a
 # manual run and the cron firing (or a boot-time catch-up) can't double-fire the week.
 MIN_INTERVAL = timedelta(days=7)
+
+
+def _deliver(
+    result: WeeklyResult, *, conn: sqlite3.Connection, chat_id: str, messenger: Messenger,
+    manner: str, now: datetime | None,
+) -> None:
+    """Decide send timing for the report vs. its calibrating questions.
+
+    "manual" (/weekly): if there are questions, HOLD the report and ask first — the
+    user is presumably at the keyboard. "scheduled": always send the report right
+    away (no one's guaranteed to be around), then follow up with any questions.
+    """
+    if manner == "manual" and result.questions:
+        weekly_qa.start(conn, chat_id, mode="interactive", questions=result.questions,
+                         report=result.report, now=now)
+        messenger.send(weekly_qa.format_intro(result.questions))
+        return
+
+    if result.report:
+        messenger.send(result.report)
+    if result.questions:
+        weekly_qa.start(conn, chat_id, mode="capture", questions=result.questions, now=now)
+        messenger.send(weekly_qa.format_followup(result.questions))
 
 
 def run_weekly_review(
@@ -40,6 +64,8 @@ def run_weekly_review(
     observations_path: Path,
     messenger: Messenger,
     tz: tzinfo,
+    chat_id: str,
+    manner: str = "scheduled",
     force: bool = False,
     now: datetime | None = None,
     min_interval: timedelta = MIN_INTERVAL,
@@ -55,15 +81,15 @@ def run_weekly_review(
 
     run_id = runs.start(conn, now)
     try:
-        run_weekly(
+        result = run_weekly(
             llm=llm,
             conn=conn,
             diet_path=diet_path,
             observations_path=observations_path,
-            messenger=messenger,
             tz=tz,
             now=now,
         )
+        _deliver(result, conn=conn, chat_id=chat_id, messenger=messenger, manner=manner, now=now)
         runs.finish(conn, run_id, datetime.now(tz), "ok")
         return True
     except Exception:
@@ -72,7 +98,7 @@ def run_weekly_review(
         raise
 
 
-def run_scheduled_review(config: Config, *, force: bool = False) -> bool:
+def run_scheduled_review(config: Config, *, force: bool = False, manner: str = "scheduled") -> bool:
     """Build production dependencies and run the review.
 
     Opens its own database connection because it may run on a background thread (the
@@ -93,6 +119,8 @@ def run_scheduled_review(config: Config, *, force: bool = False) -> bool:
         observations_path=config.data_dir / "observations.md",
         messenger=messenger,
         tz=db.get_timezone(conn, config.timezone),
+        chat_id=config.telegram_chat_id,
+        manner=manner,
         force=force,
     )
 

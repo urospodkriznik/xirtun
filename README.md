@@ -29,7 +29,8 @@ your data in plain files you own, and talks to no one but you and the model prov
   structured activity with duration, intensity, distance, and an estimated calorie
   burn (from your body weight).
 - **Clarifying questions** — if a description is too vague to estimate, it asks one
-  short follow-up instead of guessing.
+  short follow-up instead of guessing. Send `cancel` (or `nevermind`/`stop`) any time
+  to drop it instead of answering.
 - **Smart timing** — infers *when* something happened ("lunch", "this morning",
   "yesterday") in your timezone, separate from when you logged it. One message can
   describe several eating occasions at different times.
@@ -65,12 +66,20 @@ your data in plain files you own, and talks to no one but you and the model prov
 **Proactive help**
 - **Weekly autonomous review** — a tool-using agent reviews your recent diary, your
   profile, your targets, your **weight trend**, and its own past notes, then sends a
-  **structured report** (overview, energy & macros, nutrient wins, watch-outs,
-  actions, questions) with non-obvious patterns and **actionable** suggestions, framed
-  as things to look into or raise with a doctor — never a diagnosis. It treats the
-  calorie target as an *estimate* and reconciles it against your weight trend and goal,
-  so it won't tell you to eat more while your weight is steady or rising. It can also
-  ask you a question when it needs more context. Runs on a schedule and on demand.
+  **structured report** (overview, energy & macros, nutrient wins, watch-outs, actions)
+  with non-obvious patterns and **actionable** suggestions, framed as things to look
+  into or raise with a doctor — never a diagnosis. It treats the calorie target as an
+  *estimate* and reconciles it against your weight trend and goal, so it won't tell you
+  to eat more while your weight is steady or rising.
+  - It only asks a calibrating question when the answer would actually change next
+    week's analysis (e.g. resolving a logged-intake-vs-weight-trend conflict) — never a
+    generic check-in.
+  - **`/weekly`** (you're at the keyboard): questions come *first* — the report is held
+    until you answer or send `skip`/`done`. You can log a meal/symptom/etc. in between;
+    it's processed normally and the open question resurfaces afterward.
+  - **Scheduled run** (no one's guaranteed to be around): the report sends immediately;
+    any questions follow as a separate message, and your reply (whenever it comes) is
+    saved as a note for **next** week's analysis rather than reprocessing this one.
 - **Weight-log reminder** — on the morning your weekly review is due, if you haven't
   logged a weight in the last 6 days, it nudges you to send `/weight` so the review can
   judge your calories against the scale instead of just a formula.
@@ -140,9 +149,11 @@ Boundaries that keep it swappable and fully testable:
 - `memory/` — `diet.md` (your profile) and `observations.md` (the agent's long-term
   memory): durable, human-readable Markdown.
 
-The weekly run is **idempotent** (tracked in a `runs` table) with boot-time catch-up,
-so a missed schedule is run once on restart and a manual run can't double-fire. The
-full design and decision log are in [`docs/`](docs/).
+The weekly run is **idempotent** (tracked in a `runs` table), so a manual run and the
+scheduled one can't double-fire. If a review is overdue when the process restarts, it
+waits for the next `WEEKLY_CRON` tick (today or tomorrow) rather than firing
+immediately at whatever hour the restart happened to land on. The full design and
+decision log are in [`docs/`](docs/).
 
 ---
 

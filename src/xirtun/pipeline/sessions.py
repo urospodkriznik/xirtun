@@ -31,7 +31,17 @@ def _now(now: datetime | None) -> datetime:
     return now or datetime.now(timezone.utc)
 
 
-def get_active(conn: sqlite3.Connection, chat_id: str, *, now: datetime | None = None) -> Session | None:
+def peek_kind(conn: sqlite3.Connection, chat_id: str) -> str | None:
+    """The kind of the pending session, if any, WITHOUT applying expiry — lets a
+    caller pick the right timeout for get_active before it evaluates staleness
+    (different session kinds may warrant very different timeouts)."""
+    row = conn.execute("SELECT kind FROM pending WHERE chat_id = ?", (chat_id,)).fetchone()
+    return row["kind"] if row else None
+
+
+def get_active(
+    conn: sqlite3.Connection, chat_id: str, *, now: datetime | None = None, timeout: timedelta = TIMEOUT,
+) -> Session | None:
     now = _now(now)
     row = conn.execute(
         "SELECT chat_id, kind, draft, updated_at FROM pending WHERE chat_id = ?",
@@ -43,8 +53,10 @@ def get_active(conn: sqlite3.Connection, chat_id: str, *, now: datetime | None =
     updated_at = datetime.fromisoformat(row["updated_at"])
 
     # Expire stale sessions so a forgotten meal doesn't capture a later, unrelated
-    # message: drop anything older than TIMEOUT and treat it as "no active session".
-    if updated_at < now - TIMEOUT:
+    # message: drop anything older than `timeout` and treat it as "no active session".
+    # Callers holding something that must never be silently lost (e.g. a withheld
+    # weekly report awaiting Q&A) pass a much longer timeout than the default.
+    if updated_at < now - timeout:
         clear(conn, chat_id)
         return None
 

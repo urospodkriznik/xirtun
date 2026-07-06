@@ -258,15 +258,17 @@ weekly run and future re-processing can re-derive structure if needed.
 ## Scheduling
 
 APScheduler `BackgroundScheduler` runs inside the bot process (ADR-006). One
-artifact, identical on Docker and the VM. Default schedule: **Sunday 09:00**
-(local time), overridable via config (cron expression). The same `run_weekly()`
-is also **triggerable on demand** (a `/weekly` command) for testing and ad-hoc
-runs. Robustness comes from:
+artifact, identical on Docker and the VM. `WEEKLY_CRON` checks daily (default
+17:00 local time) whether 7 days have passed since the last successful review;
+overridable via config. The same `run_weekly()` is also **triggerable on demand**
+(a `/weekly` command) for testing and ad-hoc runs. Robustness comes from:
 - Docker `restart: always` / systemd supervision (needed for the bot anyway).
 - Idempotent weekly run keyed on the `runs` table (an on-demand run and the
   scheduled run for the same slot must not double-fire).
-- On startup, check `runs`: if the last scheduled weekly slot was missed (process
-  was down), run it once to catch up.
+- No immediate startup catch-up (ADR-013): if a review is overdue when the
+  process restarts, it simply waits for the next `WEEKLY_CRON` tick — which
+  `CronTrigger` computes as today or tomorrow from the moment it starts — rather
+  than firing at whatever odd hour the restart happened to land on.
 
 Can be split to system cron later with zero change to `run_weekly()` — only the
 trigger differs.

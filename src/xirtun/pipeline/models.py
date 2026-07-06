@@ -152,3 +152,6 @@ class AgentAction(BaseModel):
     tool: str | None = None              # tool name to call, or null to finish
     args_json: str = "{}"                # JSON object string of arguments for the tool
     final_message: str | None = None     # message to send the user when finishing (may be empty)
+    # Calibrating questions, set only when finishing — kept OUT of final_message so the
+    # app can control send timing (hold for /weekly, follow up after a scheduled run).
+    questions: list[str] = Field(default_factory=list)

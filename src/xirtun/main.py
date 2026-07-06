@@ -4,9 +4,12 @@ Run:  uv run python -m xirtun.main
 Needs TELEGRAM_TOKEN, TELEGRAM_CHAT_ID, GEMINI_API_KEY in .env. Timezone defaults to
 UTC and is set from the onboarding interview instead (stored in the DB).
 
-Starts the weekly-review scheduler, runs a catch-up review if one is overdue, then
-serves the Telegram bot. On first run (empty diet.md) the bot interviews the user;
-afterwards every message goes through the intake pipeline.
+Starts the weekly-review scheduler, then serves the Telegram bot. An overdue review
+fires at the next WEEKLY_CRON tick (today or tomorrow, whichever the cron trigger
+computes from the moment it starts) rather than immediately at boot — so a restart at
+3am doesn't send a review at 3am; see docs/decisions.md ADR-013. On first run (empty
+diet.md) the bot interviews the user; afterwards every message goes through the
+intake pipeline.
 """
 
 from __future__ import annotations
@@ -22,7 +25,6 @@ from xirtun.config import load_config
 from xirtun.llm.base import LLMClient
 from xirtun.llm.gemini import GeminiClient
 from xirtun.logging_setup import setup_logging
-from xirtun.memory import diet as memory
 from xirtun.messaging.base import IncomingMessage, Messenger
 from xirtun.messaging.telegram import TelegramMessenger
 from xirtun.pipeline.intake import dispatch
@@ -68,6 +70,7 @@ def make_intake_handler(
     conn: sqlite3.Connection,
     messenger: Messenger,
     diet_path: Path,
+    observations_path: Path,
     default_tz: tzinfo,
     weekly_cb: Callable[[], None],
     on_timezone_change: Callable[[tzinfo], None] | None = None,
@@ -84,6 +87,7 @@ def make_intake_handler(
             conn=conn,
             messenger=messenger,
             diet_path=diet_path,
+            observations_path=observations_path,
             weekly_cb=weekly_cb,
             on_timezone_change=on_timezone_change,
             now=datetime.now(tz),
@@ -101,6 +105,7 @@ def main() -> None:
     conn = db.get_connection(db_path)
 
     diet_path = config.data_dir / "diet.md"
+    observations_path = config.data_dir / "observations.md"
     llm = GeminiClient(config.gemini_api_key, config.cheap_model)
     messenger = TelegramMessenger(
         token=config.telegram_token,
@@ -114,15 +119,16 @@ def main() -> None:
         logger.exception("failed to register command menu")
 
     scheduler = start_scheduler(config, conn)
-    # Catch up a missed weekly review (but not before the user has onboarded).
-    if not memory.is_empty(diet_path):
-        run_scheduled_review(config, force=False)
+    # No immediate boot-time catch-up (see ADR-013): an overdue review just waits for
+    # the cron trigger's next tick, which CronTrigger computes as today or tomorrow
+    # from the moment it starts — bounded delay, never a 3am surprise from a restart.
 
-    weekly_cb = partial(run_scheduled_review, config, force=True)
+    weekly_cb = partial(run_scheduled_review, config, force=True, manner="manual")
     on_timezone_change = partial(reschedule, scheduler, config)
     messenger.run(
         make_intake_handler(
-            llm, conn, messenger, diet_path, config.timezone, weekly_cb, on_timezone_change,
+            llm, conn, messenger, diet_path, observations_path, config.timezone,
+            weekly_cb, on_timezone_change,
         )
     )
 
