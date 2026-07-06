@@ -46,14 +46,6 @@ def _base_env(monkeypatch, tmp_path):
     monkeypatch.setenv("DATA_DIR", str(tmp_path))
 
 
-def test_load_config_parses_timezone(monkeypatch, tmp_path):
+def test_load_config_defaults_timezone_to_utc(monkeypatch, tmp_path):
     _base_env(monkeypatch, tmp_path)
-    monkeypatch.setenv("TIMEZONE", "Europe/Ljubljana")
-    assert load_config().timezone.key == "Europe/Ljubljana"
-
-
-def test_load_config_bad_timezone_raises(monkeypatch, tmp_path):
-    _base_env(monkeypatch, tmp_path)
-    monkeypatch.setenv("TIMEZONE", "Mars/Olympus")
-    with pytest.raises(ConfigError):
-        load_config()
+    assert load_config().timezone.key == "UTC"

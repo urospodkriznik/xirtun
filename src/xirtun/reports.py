@@ -116,4 +116,11 @@ def recent_notes_report(diet_path: Path, limit: int = 3) -> str:
     notes = memory_diet.recent_notes(diet_path, limit)
     if not notes:
         return "No notes yet."
-    return f"Last {len(notes)} notes:\n" + "\n".join(notes)
+    lines = []
+    for raw in notes:
+        parsed = memory_diet.parse_note_line(raw)
+        if parsed:
+            lines.append(f"- {_fmt_time(parsed['occurred_at'].isoformat())}: {parsed['text']}")
+        else:
+            lines.append(raw)  # pre-timestamp legacy note — show as stored
+    return f"Last {len(lines)} notes:\n" + "\n".join(lines)

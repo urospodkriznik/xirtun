@@ -195,10 +195,19 @@ def _item_with_tags(row: sqlite3.Row) -> dict[str, Any]:
     return item
 
 
-def last_entry(conn: sqlite3.Connection) -> dict[str, Any] | None:
+def last_entry(
+    conn: sqlite3.Connection,
+    *,
+    extra_candidates: list[tuple[str, datetime | None, Any, str]] = (),
+) -> dict[str, Any] | None:
     """The most recent entry the user created — a logged meal/symptom/exercise, or a
     saved food/meal — without deleting it. Saved items compare by created_at so /undo
-    can take back a /food or /savemeal the same way it takes back a logged meal."""
+    can take back a /food or /savemeal the same way it takes back a logged meal.
+
+    `extra_candidates` lets a caller fold in entries that don't live in this database
+    (e.g. a note in diet.md) so recency is compared across both — each is
+    (kind, occurred_at, id, description); entries with no timestamp are ignored.
+    """
     meal = conn.execute(
         "SELECT id, logged_at, raw_text FROM meals ORDER BY logged_at DESC, id DESC LIMIT 1"
     ).fetchone()
@@ -226,6 +235,7 @@ def last_entry(conn: sqlite3.Connection) -> dict[str, Any] | None:
         candidates.append(("food", _parse_dt(food["created_at"]), food["id"], f"saved food: {food['name']}"))
     if saved_meal is not None:
         candidates.append(("saved_meal", _parse_dt(saved_meal["created_at"]), saved_meal["id"], f"saved meal: {saved_meal['name']}"))
+    candidates += [c for c in extra_candidates if c[1] is not None]
     if not candidates:
         return None
 

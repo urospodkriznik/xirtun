@@ -1,5 +1,7 @@
 """Tests for the first-run interview and the onboard-vs-intake dispatch."""
 
+from zoneinfo import ZoneInfo
+
 from xirtun.llm.base import LLMResponse
 from xirtun.llm.fake import FakeLLM
 from xirtun.memory import diet as memory
@@ -41,6 +43,44 @@ def test_onboarding_stores_metrics(conn, tmp_path):
              messenger=FakeMessenger(), diet_path=diet)
 
     assert targets.read_metrics(conn)["weight_kg"] == 80
+
+
+def test_onboarding_stores_timezone_separately_from_metrics(conn, tmp_path):
+    from xirtun import targets
+    from xirtun.storage import db
+
+    diet = tmp_path / "diet.md"
+    llm = FakeLLM([
+        LLMResponse(data={
+            "done": True,
+            "diet_markdown": "# Profile",
+            "metrics": {"sex": "male", "timezone": "Europe/Ljubljana"},
+        }),
+    ])
+
+    dispatch("I live in Ljubljana", chat_id="c1", llm=llm, conn=conn,
+             messenger=FakeMessenger(), diet_path=diet)
+
+    assert db.get_timezone(conn, "default") == ZoneInfo("Europe/Ljubljana")
+    assert "timezone" not in targets.read_metrics(conn)  # not a body metric
+
+
+def test_onboarding_ignores_invalid_timezone(conn, tmp_path):
+    from xirtun.storage import db
+
+    diet = tmp_path / "diet.md"
+    llm = FakeLLM([
+        LLMResponse(data={
+            "done": True,
+            "diet_markdown": "# Profile",
+            "metrics": {"sex": "male", "timezone": "Not/AZone"},
+        }),
+    ])
+
+    dispatch("I live somewhere", chat_id="c1", llm=llm, conn=conn,
+             messenger=FakeMessenger(), diet_path=diet)
+
+    assert db.get_timezone(conn, "default") == "default"  # invalid value silently dropped
 
 
 def test_dispatch_skips_onboarding_when_profile_is_current(conn, tmp_path):
@@ -191,3 +231,63 @@ def test_weekly_command_invokes_callback(conn, tmp_path):
 
     assert called == [True]
     assert messenger.sent  # acknowledged before running
+
+
+def test_timezone_command_sets_kv_and_notifies_callback(conn, tmp_path):
+    from xirtun.storage import db
+
+    diet = tmp_path / "diet.md"
+    diet.write_text("# Profile")
+    messenger = FakeMessenger()
+    changed = []
+
+    dispatch(
+        "/timezone Europe/Ljubljana", chat_id="c1", llm=FakeLLM(), conn=conn, messenger=messenger,
+        diet_path=diet, on_timezone_change=changed.append,
+    )
+
+    assert db.get_timezone(conn, "default") == ZoneInfo("Europe/Ljubljana")
+    assert changed == [ZoneInfo("Europe/Ljubljana")]
+    assert "Europe/Ljubljana" in messenger.sent[-1]
+
+
+def test_timezone_command_rejects_invalid_zone(conn, tmp_path):
+    from xirtun.storage import db
+
+    diet = tmp_path / "diet.md"
+    diet.write_text("# Profile")
+    messenger = FakeMessenger()
+    changed = []
+
+    dispatch(
+        "/timezone Mars/Olympus", chat_id="c1", llm=FakeLLM(), conn=conn, messenger=messenger,
+        diet_path=diet, on_timezone_change=changed.append,
+    )
+
+    assert db.get_timezone(conn, "default") == "default"  # unchanged
+    assert changed == []  # callback not invoked
+    assert "unknown" in messenger.sent[-1].lower()
+
+
+def test_timezone_command_without_argument_shows_usage(conn, tmp_path):
+    diet = tmp_path / "diet.md"
+    diet.write_text("# Profile")
+    messenger = FakeMessenger()
+
+    dispatch("/timezone", chat_id="c1", llm=FakeLLM(), conn=conn, messenger=messenger, diet_path=diet)
+
+    assert "usage" in messenger.sent[-1].lower()
+
+
+def test_timezone_command_works_before_onboarding(tmp_path, conn):
+    """Like /cleardata and /weekly, /timezone should work even while diet.md is
+    still empty — it's handled before the onboarding branch in dispatch()."""
+    from xirtun.storage import db
+
+    diet = tmp_path / "diet.md"  # empty -> would normally route to onboarding
+    messenger = FakeMessenger()
+
+    dispatch("/timezone Europe/Ljubljana", chat_id="c1", llm=FakeLLM(), conn=conn, messenger=messenger, diet_path=diet)
+
+    assert db.get_timezone(conn, "default") == ZoneInfo("Europe/Ljubljana")
+    assert memory.is_empty(diet)  # onboarding wasn't touched

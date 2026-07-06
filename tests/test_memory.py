@@ -40,3 +40,37 @@ def test_append_note(tmp_path):
     text = p.read_text()
     assert text.count(memory.NOTE_HEADING) == 1     # one heading, not one per note
     assert "gain muscle" in text and "wants more lutein" in text
+
+
+def test_last_note_returns_most_recent_with_timestamp(tmp_path):
+    p = tmp_path / "diet.md"
+    p.write_text("# Profile\n")
+    assert memory.last_note(p) is None
+
+    memory.append_note(p, "gain muscle", now=datetime(2026, 1, 1, tzinfo=timezone.utc))
+    memory.append_note(p, "wants more lutein", now=datetime(2026, 1, 2, tzinfo=timezone.utc))
+
+    last = memory.last_note(p)
+    assert last["text"] == "wants more lutein"
+    assert last["occurred_at"] == datetime(2026, 1, 2, tzinfo=timezone.utc)
+
+
+def test_remove_last_note_removes_only_the_last_one(tmp_path):
+    p = tmp_path / "diet.md"
+    p.write_text("# Profile\n")
+    memory.append_note(p, "gain muscle", now=datetime(2026, 1, 1, tzinfo=timezone.utc))
+    memory.append_note(p, "wants more lutein", now=datetime(2026, 1, 2, tzinfo=timezone.utc))
+
+    removed = memory.remove_last_note(p)
+    assert removed == "wants more lutein"
+
+    text = p.read_text()
+    assert "gain muscle" in text
+    assert "wants more lutein" not in text
+    assert memory.last_note(p)["text"] == "gain muscle"
+
+
+def test_remove_last_note_empty_is_noop(tmp_path):
+    p = tmp_path / "diet.md"
+    p.write_text("# Profile\n")
+    assert memory.remove_last_note(p) is None

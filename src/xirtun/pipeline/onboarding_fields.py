@@ -56,6 +56,8 @@ ONBOARDING_FIELDS: list[Field] = [
     {"key": "residence",     "since": 2, "target": "profile", "question": "Where do you live for the majority of the year?"},
     # --- version 3 ---
     {"key": "birth_year",    "since": 3, "target": "metrics", "question": "What year were you born? (the month is a bonus)"},
+    # --- version 4 ---
+    {"key": "timezone",      "since": 4, "target": "metrics", "question": "What timezone are you in? (e.g. Europe/Ljubljana, America/New_York)"},
 ]
 
 # Questions we no longer ask. Kept here so a top-up can strip the now-stale answer

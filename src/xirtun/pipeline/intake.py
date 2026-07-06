@@ -14,9 +14,10 @@ import json
 import logging
 import sqlite3
 from collections.abc import Callable
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, tzinfo
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from xirtun.llm.base import LLMClient
 from xirtun.messaging.base import Messenger
@@ -73,6 +74,7 @@ HELP_TEXT = (
     "/export — download your diary as a JSON backup\n"
     "/userinfo — show your profile and body metrics\n"
     "/weekly — run your weekly review now\n"
+    "/timezone <IANA name> — set your timezone, e.g. /timezone Europe/Ljubljana\n"
     "/cleardata — erase everything (asks to confirm)"
 )
 
@@ -95,7 +97,7 @@ def format_ack(meals: list[dict[str, Any]]) -> str:
     """Confirmation summarizing the meal(s) logged, with per-item and total macros."""
     all_totals = {"calories": 0.0, "protein_g": 0.0, "fat_g": 0.0, "carbs_g": 0.0, "sugar_g": 0.0}
     lines = []
-    header = "Logged:" if len(meals) == 1 else f"Logged {len(meals)} meals:"
+    header = "Meal logged:" if len(meals) == 1 else f"Logged {len(meals)} meals:"
     lines.append(header)
     for meal in meals:
         t = _fmt_occurred(meal.get("occurred_at"))
@@ -137,7 +139,8 @@ def format_symptom_ack(symptoms: list[dict[str, Any]]) -> str:
             extra.append(str(s["duration"]))
         suffix = f" ({', '.join(extra)})" if extra else ""
         parts.append(f"{s['type']}{suffix}")
-    return "Noted: " + ", ".join(parts) + "."
+    label = "Symptom logged:" if len(symptoms) == 1 else "Symptoms logged:"
+    return f"{label} " + ", ".join(parts) + "."
 
 
 def handle_message(
@@ -174,7 +177,12 @@ def handle_message(
         return
 
     if text == "/undo":
-        entry = diary.last_entry(conn)
+        note_candidates = []
+        if diet_path is not None:
+            note = memory.last_note(diet_path)
+            if note is not None:
+                note_candidates.append(("note", note["occurred_at"], None, f"note: {note['text']}"))
+        entry = diary.last_entry(conn, extra_candidates=note_candidates)
         if entry is None:
             messenger.send("Nothing to undo.")
         else:
@@ -325,7 +333,7 @@ def handle_message(
             _resolve_food_confirm(session, text, chat_id=chat_id, conn=conn, messenger=messenger)
             return
         if session.kind == "undo_confirm":
-            _resolve_undo(session, text, chat_id=chat_id, conn=conn, messenger=messenger)
+            _resolve_undo(session, text, chat_id=chat_id, conn=conn, messenger=messenger, diet_path=diet_path)
             return
         if session.kind == "delfood_confirm":
             _resolve_delfood(session, text, chat_id=chat_id, conn=conn, messenger=messenger)
@@ -463,7 +471,7 @@ def _process_note(
     now: datetime | None = None,
 ) -> None:
     memory.append_note(diet_path, text, now=now)
-    messenger.send("Got it — noted. I'll factor that into your weekly review.")
+    messenger.send("Note saved — I'll factor it into your weekly review.")
 
 
 def _process_shopping(
@@ -511,7 +519,7 @@ def _process_food(
     # Same name already saved -> just update it, no need to ask.
     if foods.find_by_name(conn, food["name"]):
         foods.add(conn, food)
-        messenger.send("Updated — " + _food_line(food))
+        messenger.send("Updated food — " + _food_line(food))
         return
 
     # A similarly-named food exists -> ask whether it's the same item.
@@ -532,7 +540,7 @@ def _process_food(
 
 def _save_food(conn: sqlite3.Connection, food: dict[str, Any], messenger: Messenger) -> None:
     foods.add(conn, food)
-    messenger.send("Saved — " + _food_line(food) + "\nI'll use it whenever you log it.")
+    messenger.send("Saved food — " + _food_line(food) + "\nI'll use it whenever you log it.")
 
 
 def _resolve_food_confirm(
@@ -550,7 +558,7 @@ def _resolve_food_confirm(
     if choice.startswith(("u", "y")):       # update / overwrite the existing food
         merged = {**food, "name": candidate}
         foods.add(conn, merged)
-        messenger.send("Updated — " + _food_line(merged))
+        messenger.send("Updated food — " + _food_line(merged))
     elif choice.startswith("a"):            # add as a new, separate food
         _save_food(conn, food, messenger)
     else:                                    # cancel (default for anything unrecognized)
@@ -564,11 +572,15 @@ def _resolve_undo(
     chat_id: str,
     conn: sqlite3.Connection,
     messenger: Messenger,
+    diet_path: Path | None = None,
 ) -> None:
     entry = json.loads(session.text)
     sessions.clear(conn, chat_id)
     if answer.strip().lower().startswith("y"):
-        diary.delete_entry(conn, entry["kind"], entry["id"])
+        if entry["kind"] == "note" and diet_path is not None:
+            memory.remove_last_note(diet_path)
+        else:
+            diary.delete_entry(conn, entry["kind"], entry["id"])
         messenger.send(f"Removed — {entry['description']}.")
     else:
         messenger.send("Cancelled. Nothing was removed.")
@@ -803,6 +815,29 @@ def _update_activity(
     )
 
 
+def _process_timezone_command(
+    command: str,
+    *,
+    conn: sqlite3.Connection,
+    messenger: Messenger,
+    on_timezone_change: Callable[[tzinfo], None] | None,
+) -> None:
+    tz_name = command[len("/timezone"):].strip()
+    if not tz_name:
+        messenger.send("Usage: /timezone <IANA name>, e.g. /timezone Europe/Ljubljana")
+        return
+    try:
+        db.set_timezone(conn, tz_name)
+    except ZoneInfoNotFoundError:
+        messenger.send(
+            f"Unknown timezone: {tz_name!r}. Use an IANA name, e.g. Europe/Ljubljana or America/New_York."
+        )
+        return
+    if on_timezone_change is not None:
+        on_timezone_change(ZoneInfo(tz_name))
+    messenger.send(f"Timezone set to {tz_name}. Meal times and your reminders will use it from now on.")
+
+
 def dispatch(
     text: str,
     *,
@@ -812,6 +847,7 @@ def dispatch(
     messenger: Messenger,
     diet_path: Path,
     weekly_cb: Callable[[], None] | None = None,
+    on_timezone_change: Callable[[tzinfo], None] | None = None,
     now: datetime | None = None,
 ) -> None:
     """Top-level entry: run the first-run interview while diet.md is empty,
@@ -830,6 +866,11 @@ def dispatch(
     if command == "/weekly" and weekly_cb is not None:
         messenger.send("Running your weekly review now…")
         weekly_cb()
+        return
+    if command.startswith("/timezone"):
+        _process_timezone_command(
+            command, conn=conn, messenger=messenger, on_timezone_change=on_timezone_change,
+        )
         return
 
     if memory.is_empty(diet_path):
@@ -924,9 +965,18 @@ def _commit_onboarding_result(
     if step.get("diet_markdown"):
         memory.write_diet(diet_path, step["diet_markdown"], now=now)
     if step.get("metrics"):
+        new_metrics = dict(step["metrics"])
+        # Timezone isn't a body metric — it drives scheduling, so it lives in its
+        # own kv key (db.get_timezone) rather than the metrics blob.
+        tz_name = new_metrics.pop("timezone", None)
+        if tz_name:
+            try:
+                db.set_timezone(conn, tz_name)
+            except ZoneInfoNotFoundError:
+                logger.warning("onboarding produced an invalid timezone %r; ignoring", tz_name)
         # Merge, don't replace: a top-up that answers one metric must not wipe the rest.
         metrics = targets.read_metrics(conn)
-        metrics.update({k: v for k, v in step["metrics"].items() if v is not None})
+        metrics.update({k: v for k, v in new_metrics.items() if v is not None})
         targets.write_metrics(conn, metrics)
     _set_onboarding_version(conn, CURRENT_ONBOARDING_VERSION)
 

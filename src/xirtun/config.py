@@ -11,9 +11,14 @@ import os
 from dataclasses import dataclass
 from datetime import tzinfo
 from pathlib import Path
-from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+from zoneinfo import ZoneInfo
 
 from dotenv import load_dotenv
+
+# The default timezone before a user sets their own via onboarding (see
+# storage/db.get_timezone). Not configurable via env — this is a single-user app
+# and the timezone is meant to live in the DB so it can change from chat.
+DEFAULT_TIMEZONE = ZoneInfo("UTC")
 
 
 @dataclass(frozen=True)
@@ -47,12 +52,6 @@ def load_config() -> Config:
     data_dir = Path(os.environ.get("DATA_DIR", "./data"))
     data_dir.mkdir(parents=True, exist_ok=True)
 
-    tz_name = os.environ.get("TIMEZONE", "UTC")
-    try:
-        timezone = ZoneInfo(tz_name)
-    except ZoneInfoNotFoundError as exc:
-        raise ConfigError(f"Unknown TIMEZONE: {tz_name!r}") from exc
-
     return Config(
         telegram_token=_require("TELEGRAM_TOKEN"),
         telegram_chat_id=_require("TELEGRAM_CHAT_ID"),
@@ -64,5 +63,5 @@ def load_config() -> Config:
         # Morning check; should fire earlier in the day than WEEKLY_CRON so the nudge
         # lands the morning of the review.
         weight_reminder_cron=os.environ.get("WEIGHT_REMINDER_CRON", "0 8 * * *"),
-        timezone=timezone,
+        timezone=DEFAULT_TIMEZONE,
     )

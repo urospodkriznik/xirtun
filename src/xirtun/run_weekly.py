@@ -92,7 +92,7 @@ def run_scheduled_review(config: Config, *, force: bool = False) -> bool:
         diet_path=config.data_dir / "diet.md",
         observations_path=config.data_dir / "observations.md",
         messenger=messenger,
-        tz=config.timezone,
+        tz=db.get_timezone(conn, config.timezone),
         force=force,
     )
 

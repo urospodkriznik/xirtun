@@ -10,7 +10,9 @@ placeholders for values; never string-format data into SQL.
 from __future__ import annotations
 
 import sqlite3
+from datetime import tzinfo
 from pathlib import Path
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 # The schema mirrors docs/architecture.md. CREATE IF NOT EXISTS makes init_db
 # safe to call on every startup.
@@ -156,3 +158,25 @@ def kv_set(conn: sqlite3.Connection, key: str, value: str) -> None:
         (key, value),
     )
     conn.commit()
+
+
+# --- user timezone (set via onboarding, changeable later from chat) ---
+
+_TIMEZONE_KEY = "timezone"
+
+
+def get_timezone(conn: sqlite3.Connection, default: tzinfo) -> tzinfo:
+    """The user's IANA timezone, or `default` if unset or invalid."""
+    raw = kv_get(conn, _TIMEZONE_KEY)
+    if not raw:
+        return default
+    try:
+        return ZoneInfo(raw)
+    except ZoneInfoNotFoundError:
+        return default
+
+
+def set_timezone(conn: sqlite3.Connection, tz_name: str) -> None:
+    """Store the user's IANA timezone. Raises ZoneInfoNotFoundError if invalid."""
+    ZoneInfo(tz_name)  # validate before persisting
+    kv_set(conn, _TIMEZONE_KEY, tz_name)

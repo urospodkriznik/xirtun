@@ -1,7 +1,8 @@
 """Entry point. Wires config -> database -> Gemini -> Telegram and runs the bot.
 
 Run:  uv run python -m xirtun.main
-Needs TELEGRAM_TOKEN, TELEGRAM_CHAT_ID, GEMINI_API_KEY (+ optional TIMEZONE) in .env.
+Needs TELEGRAM_TOKEN, TELEGRAM_CHAT_ID, GEMINI_API_KEY in .env. Timezone defaults to
+UTC and is set from the onboarding interview instead (stored in the DB).
 
 Starts the weekly-review scheduler, runs a catch-up review if one is overdue, then
 serves the Telegram bot. On first run (empty diet.md) the bot interviews the user;
@@ -26,7 +27,7 @@ from xirtun.messaging.base import IncomingMessage, Messenger
 from xirtun.messaging.telegram import TelegramMessenger
 from xirtun.pipeline.intake import dispatch
 from xirtun.run_weekly import run_scheduled_review
-from xirtun.scheduler import start_scheduler
+from xirtun.scheduler import reschedule, start_scheduler
 from xirtun.storage import db
 
 logger = logging.getLogger(__name__)
@@ -57,6 +58,7 @@ COMMANDS = [
     ("weekly", "Run your weekly review now"),
     ("profile", "Show your profile"),
     ("cleardata", "Erase all your data"),
+    ("timezone", "Set your timezone"),
     ("help", "What I can do"),
 ]
 
@@ -66,11 +68,15 @@ def make_intake_handler(
     conn: sqlite3.Connection,
     messenger: Messenger,
     diet_path: Path,
-    tz: tzinfo,
+    default_tz: tzinfo,
     weekly_cb: Callable[[], None],
+    on_timezone_change: Callable[[tzinfo], None] | None = None,
 ) -> Callable[[IncomingMessage], None]:
     def handle(message: IncomingMessage) -> None:
         logger.info("recv from %s: %s", message.sender_id, message.text)
+        # Re-read per message (not captured once) so a timezone set via onboarding
+        # or /timezone takes effect immediately, without a restart.
+        tz = db.get_timezone(conn, default_tz)
         dispatch(
             message.text,
             chat_id=message.sender_id,
@@ -79,6 +85,7 @@ def make_intake_handler(
             messenger=messenger,
             diet_path=diet_path,
             weekly_cb=weekly_cb,
+            on_timezone_change=on_timezone_change,
             now=datetime.now(tz),
         )
 
@@ -106,13 +113,18 @@ def main() -> None:
     except Exception:  # noqa: BLE001 — non-fatal if Telegram is unreachable at boot
         logger.exception("failed to register command menu")
 
-    start_scheduler(config)
+    scheduler = start_scheduler(config, conn)
     # Catch up a missed weekly review (but not before the user has onboarded).
     if not memory.is_empty(diet_path):
         run_scheduled_review(config, force=False)
 
     weekly_cb = partial(run_scheduled_review, config, force=True)
-    messenger.run(make_intake_handler(llm, conn, messenger, diet_path, config.timezone, weekly_cb))
+    on_timezone_change = partial(reschedule, scheduler, config)
+    messenger.run(
+        make_intake_handler(
+            llm, conn, messenger, diet_path, config.timezone, weekly_cb, on_timezone_change,
+        )
+    )
 
 
 if __name__ == "__main__":

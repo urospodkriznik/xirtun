@@ -81,11 +81,14 @@ Fill in:
 | `GEMINI_API_KEY` | Google AI Studio key |
 | `LLM_CHEAP_MODEL` | `gemini-2.5-flash` (flash-lite has been returning 503s) |
 | `LLM_STRONG_MODEL` | `gemini-2.5-pro` |
-| `TIMEZONE` | **Set this.** The VM clock is UTC; set your IANA zone (e.g. `Europe/Ljubljana`) so meal/symptom times and the weekly cron fire in local time. |
 | `WEEKLY_CRON` | Optional; default Sunday 09:00 (local). |
 | `DATA_DIR` | Optional; defaults to `./data`. |
 
 The app validates these at startup and fails loudly if a required one is missing.
+
+Timezone isn't set here — the VM clock is UTC and the app defaults to it until the
+user gives their timezone during the onboarding interview, after which it's stored
+in the DB and used for meal/symptom times, the weekly cron, and the weight reminder.
 
 ### Data directory
 

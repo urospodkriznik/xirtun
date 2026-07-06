@@ -97,7 +97,7 @@ def run_scheduled_reminder(config: Config) -> bool:
         conn=conn,
         diet_path=config.data_dir / "diet.md",
         messenger=messenger,
-        tz=config.timezone,
+        tz=db.get_timezone(conn, config.timezone),
     )
 
 

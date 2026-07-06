@@ -108,6 +108,7 @@ your data in plain files you own, and talks to no one but you and the model prov
 | `/weight <kg>` | Update your weight (keeps targets current) |
 | `/activity <description>` | Update your activity level in plain language (recomputes targets) |
 | `/weekly` | Run the weekly review right now |
+| `/timezone <IANA name>` | Set your timezone, e.g. `/timezone Europe/Ljubljana` — takes effect immediately, no restart |
 | `/userinfo` | Show your profile and body metrics |
 | `/export` | Export your full diary (meals, symptoms, foods) as JSON |
 | `/cleardata` | Erase all your data (asks to confirm) |
@@ -161,10 +162,13 @@ cp .env.example .env   # then fill in the values
 | `GEMINI_API_KEY` | Google AI Studio API key |
 | `LLM_CHEAP_MODEL` | Hot-path model (default `gemini-2.5-flash-lite`; `gemini-2.5-flash` is more reliable for structured output and audio) |
 | `LLM_STRONG_MODEL` | Weekly-review model (default `gemini-2.5-pro`) |
-| `TIMEZONE` | IANA name, e.g. `Europe/Ljubljana` — used to interpret meal times |
 | `WEEKLY_CRON` | When to check for the weekly review (default `0 17 * * *`, daily at 17:00 — runs if 7 days have passed since the last review) |
 | `WEIGHT_REMINDER_CRON` | When to check whether to nudge for a weight log (default `0 8 * * *`, daily at 08:00 — only nudges on the morning the review is due and if no weight was logged in 6 days; keep earlier than `WEEKLY_CRON`) |
 | `DATA_DIR` | Where the SQLite DB and Markdown files live (default `./data`) |
+
+Timezone isn't an env var: it defaults to UTC and is set from the onboarding interview
+(inferred from wherever you say you live), stored in the DB so meal times, the weekly
+cron, and the weight reminder all use it. Change it any time with `/timezone`.
 
 Everything in `DATA_DIR` (`xirtun.db`, `diet.md`, `observations.md`, `diet.history/`)
 is created at runtime and is gitignored — never committed.

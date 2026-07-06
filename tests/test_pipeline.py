@@ -526,6 +526,54 @@ def test_undo_includes_saved_meal(conn):
     assert "lunch" not in custom_meals.names(conn)
 
 
+def test_undo_includes_note_when_most_recent(conn, tmp_path):
+    from datetime import timedelta
+
+    from xirtun.memory import diet as memory
+
+    now = datetime(2026, 6, 1, 10, 0, tzinfo=timezone.utc)
+    diet_path = tmp_path / "diet.md"
+    diet_path.write_text("# Profile\n")
+    diary.save_meal(conn, "banana", _meal([{"name": "banana"}]), now=now)
+    memory.append_note(diet_path, "feel low energy", now=now + timedelta(minutes=5))
+    messenger = FakeMessenger()
+
+    handle_message(
+        "/undo", chat_id="c1", llm=FakeLLM(), conn=conn, messenger=messenger, diet_path=diet_path,
+    )
+    assert "note: feel low energy" in messenger.sent[-1]
+
+    handle_message(
+        "yes", chat_id="c1", llm=FakeLLM(), conn=conn, messenger=messenger, diet_path=diet_path,
+    )
+    assert "feel low energy" not in memory.read_diet(diet_path)
+    assert conn.execute("SELECT COUNT(*) AS n FROM meals").fetchone()["n"] == 1  # meal untouched
+
+
+def test_undo_prefers_newer_diary_entry_over_older_note(conn, tmp_path):
+    from datetime import timedelta
+
+    from xirtun.memory import diet as memory
+
+    now = datetime(2026, 6, 1, 10, 0, tzinfo=timezone.utc)
+    diet_path = tmp_path / "diet.md"
+    diet_path.write_text("# Profile\n")
+    memory.append_note(diet_path, "feel low energy", now=now)
+    diary.save_symptom(conn, "fatigue", _symptom("fatigue"), now=now + timedelta(minutes=5))
+    messenger = FakeMessenger()
+
+    handle_message(
+        "/undo", chat_id="c1", llm=FakeLLM(), conn=conn, messenger=messenger, diet_path=diet_path,
+    )
+    assert "symptom: fatigue" in messenger.sent[-1]
+
+    handle_message(
+        "yes", chat_id="c1", llm=FakeLLM(), conn=conn, messenger=messenger, diet_path=diet_path,
+    )
+    assert conn.execute("SELECT COUNT(*) AS n FROM symptoms").fetchone()["n"] == 0
+    assert "feel low energy" in memory.read_diet(diet_path)  # note untouched
+
+
 def _exercise(type_, **kw):
     base = {"occurred_at": None, "type": type_, "duration_min": None, "intensity": None,
             "calories_burned": None, "distance_km": None, "notes": None, "tags": []}
