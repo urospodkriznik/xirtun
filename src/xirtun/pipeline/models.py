@@ -28,6 +28,7 @@ class Item(BaseModel):
     fat_g: float | None = None
     carbs_g: float | None = None
     sugar_g: float | None = None       # sugars, a subset of carbs
+    fiber_g: float | None = None       # dietary fibre
     tags: list[str] = Field(default_factory=list)
     known_food: str | None = None      # name of a matching saved food, if any
     custom_meal: str | None = None     # name of a saved custom meal this item stands in for
@@ -103,12 +104,12 @@ class Metrics(BaseModel):
     height_cm: float | None = None
     weight_kg: float | None = None
     activity: Literal["sedentary", "light", "moderate", "active", "very_active"] | None = None
-    activity_description: str | None = None  # what the user actually said; shown in /userinfo
+    activity_description: str | None = None  # what the user actually said; shown in /profile
     timezone: str | None = None        # IANA name (e.g. "Europe/Ljubljana"), inferred from residence
 
 
 class ActivityClassification(BaseModel):
-    """LLM output for /activity: map a free-text description to a standard level."""
+    """LLM output for /setactivity: map a free-text description to a standard level."""
 
     activity: Literal["sedentary", "light", "moderate", "active", "very_active"]
     explanation: str   # one sentence saying why this level fits

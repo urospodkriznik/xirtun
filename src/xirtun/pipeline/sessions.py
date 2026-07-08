@@ -1,6 +1,6 @@
 """Pending-meal session state, persisted in the `pending` table.
 
-A session exists only while a meal is mid-clarification (or just opened via /meal).
+A session exists only while a meal is mid-clarification (or just opened via /addmeal).
 It accumulates the user's description across messages so the structurer always sees
 the full context. Sessions auto-expire after TIMEOUT so a forgotten meal doesn't
 swallow your next, unrelated message.

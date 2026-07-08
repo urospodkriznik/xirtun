@@ -19,7 +19,7 @@ your data in plain files you own, and talks to no one but you and the model prov
 
 **Logging (text or voice, in plain language)**
 - **Meals** — *"leftover curry, ~2 cups, and a beer"* becomes structured, timestamped
-  items with estimated calories and macros (protein, fat, carbs incl. sugars).
+  items with estimated calories and macros (protein, fat, carbs incl. sugars, fibre).
   Composite foods are broken into ingredients (a sandwich → bread, chicken, mayo,
   lettuce) and tagged with likely allergens/sensitivities (dairy, gluten, soy, egg,
   nuts, FODMAP, …).
@@ -42,8 +42,8 @@ your data in plain files you own, and talks to no one but you and the model prov
   level, allergies, conditions, family history, diet style, supplements, and goals.
 - Add to it anytime as a **note** — *"I want to gain muscle"*, *"I exercise twice a
   week"*, *"I want more lutein"* — and the weekly review factors it in.
-- Update your **weight** (`/weight`) or describe your **activity level** in plain words
-  (`/activity I train hard 3 days and walk the rest`); targets recompute automatically.
+- Update your **weight** (`/addweight`) or describe your **activity level** in plain words
+  (`/setactivity I train hard 3 days and walk the rest`); targets recompute automatically.
 - New facts are merged in over time and the old version is snapshotted before each
   rewrite (so nothing is silently lost).
 
@@ -60,7 +60,11 @@ your data in plain files you own, and talks to no one but you and the model prov
   cereals"*) and it expands to all of its stored items.
 
 **Targets & stats (deterministic — no LLM, no cost)**
-- **Daily calorie + protein targets** computed from your metrics (Mifflin–St Jeor).
+- **Daily calorie + protein targets** computed from your metrics (Mifflin–St Jeor) —
+  but that formula is only the *prior*: the weekly review **calibrates a working
+  target** from real evidence (weight trend, satiety feedback, injuries/activity
+  changes) and persists it, clamped to safe physiological bounds. `/target` shows
+  both numbers and the rationale for the current calibration.
 - **`/today`** and **`/week`** summaries with real totals and per-day averages.
 
 **Proactive help**
@@ -70,7 +74,9 @@ your data in plain files you own, and talks to no one but you and the model prov
   with non-obvious patterns and **actionable** suggestions, framed as things to look
   into or raise with a doctor — never a diagnosis. It treats the calorie target as an
   *estimate* and reconciles it against your weight trend and goal, so it won't tell you
-  to eat more while your weight is steady or rising.
+  to eat more while your weight is steady or rising — and when the evidence justifies
+  it, it **persists a recalibrated working target** (small steps, safe bounds, with its
+  reasoning) instead of re-deriving the same adjustment in prose every week.
   - It only asks a calibrating question when the answer would actually change next
     week's analysis (e.g. resolving a logged-intake-vs-weight-trend conflict) — never a
     generic check-in.
@@ -81,8 +87,12 @@ your data in plain files you own, and talks to no one but you and the model prov
     any questions follow as a separate message, and your reply (whenever it comes) is
     saved as a note for **next** week's analysis rather than reprocessing this one.
 - **Weight-log reminder** — on the morning your weekly review is due, if you haven't
-  logged a weight in the last 6 days, it nudges you to send `/weight` so the review can
+  logged a weight in the last 6 days, it nudges you to send `/addweight` so the review can
   judge your calories against the scale instead of just a formula.
+- **Late-meal nudge** — log a meal eaten after 20:00 in (near) real time and it replies
+  once per evening with a reminder to stay upright for 2–3 hours (reflux prevention at
+  the moment it matters, not in Sunday's retrospective). Backdated entries don't
+  trigger it.
 - **Shopping-list assistant** — *"heading to the shop, what should I grab?"* →
   suggestions drawn from your goals, recent diet, and gaps (and it won't suggest what
   you already ate this week).
@@ -98,29 +108,31 @@ your data in plain files you own, and talks to no one but you and the model prov
 | Command | What it does |
 |---|---|
 | *(just type or speak)* | Log a meal/symptom/workout, add a note, ask for a shopping list, or save a food — all in plain language |
-| `/meal` | Start a fresh multi-message meal entry |
-| `/exercise` | Log a workout |
-| `/note <text>` | Save a note or goal for your weekly review |
+| `/addmeal` | Start a fresh multi-message meal entry |
+| `/addworkout` | Log a workout |
+| `/addsymptom <text>` | Log how you feel |
+| `/addnote <text>` | Save a note or goal for your weekly review |
 | `/undo` | Remove your last logged entry (asks to confirm, shows what it'll delete) |
 | `/today` | Today's meals and totals |
 | `/week` | The past 7 days, with per-day averages |
 | `/lastmeals` · `/lastsymptoms` · `/lastworkouts` · `/lastnotes` | Your last 3 of each, with times — to check what you've already logged |
 | `/shop` | Suggest a shopping list |
-| `/food <name>: <per-100g nutrition>` | Save a food's label (with package size + fibre) |
-| `/myfood` | List your saved foods |
+| `/savefood <name>: <per-100g nutrition>` | Save a food's label (with package size + fibre) |
+| `/foodlist` | List your saved foods |
 | `/checkfood <name>` | Check whether a food is saved (exact + similar matches) |
 | `/delfood <name>` | Remove a saved food |
 | `/savemeal <name>: <ingredients>` | Save a recurring meal (recipe) |
-| `/mymeals` | List your saved meals |
+| `/meallist` | List your saved meals |
 | `/delmeal <name>` | Remove a saved meal |
-| `/target` | Your daily calorie & protein target, plus your recent weight trend |
-| `/weight <kg>` | Update your weight (keeps targets current) |
-| `/activity <description>` | Update your activity level in plain language (recomputes targets) |
+| `/target` | Formula estimate + your calibrated working target (with why), plus your recent weight trend |
+| `/addweight <kg>` | Update your weight (keeps targets current) |
+| `/setactivity <description>` | Update your activity level in plain language (recomputes targets) |
 | `/weekly` | Run the weekly review right now |
-| `/timezone <IANA name>` | Set your timezone, e.g. `/timezone Europe/Ljubljana` — takes effect immediately, no restart |
-| `/userinfo` | Show your profile and body metrics |
+| `/settimezone <IANA name>` | Set your timezone, e.g. `/settimezone Europe/Ljubljana` — takes effect immediately, no restart |
+| `/profile` | Show your profile and body metrics |
 | `/export` | Export your full diary (meals, symptoms, foods) as JSON |
 | `/cleardata` | Erase all your data (asks to confirm) |
+| `/skip` | Skip a weekly-review calibration question |
 | `/help` | What I can do |
 
 ---
@@ -179,7 +191,7 @@ cp .env.example .env   # then fill in the values
 
 Timezone isn't an env var: it defaults to UTC and is set from the onboarding interview
 (inferred from wherever you say you live), stored in the DB so meal times, the weekly
-cron, and the weight reminder all use it. Change it any time with `/timezone`.
+cron, and the weight reminder all use it. Change it any time with `/settimezone`.
 
 Everything in `DATA_DIR` (`xirtun.db`, `diet.md`, `observations.md`, `diet.history/`)
 is created at runtime and is gitignored — never committed.

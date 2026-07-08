@@ -147,6 +147,35 @@ def test_symptom_clarification_routes_back_to_symptom(conn):
     assert conn.execute("SELECT COUNT(*) AS n FROM symptoms").fetchone()["n"] == 1
 
 
+def test_symptom_command_logs_directly(conn):
+    llm = FakeLLM([
+        LLMResponse(data={"needs_clarification": False, "symptoms": [_symptom("fatigue")]}),
+    ])
+    messenger = FakeMessenger()
+    handle_message("/addsymptom low energy", chat_id="c1", llm=llm, conn=conn, messenger=messenger)
+    assert conn.execute("SELECT COUNT(*) AS n FROM symptoms").fetchone()["n"] == 1
+    assert "Symptom logged: fatigue" in messenger.sent[-1]
+
+
+def test_symptom_command_without_text_shows_usage(conn):
+    messenger = FakeMessenger()
+    handle_message("/addsymptom", chat_id="c1", llm=FakeLLM(), conn=conn, messenger=messenger)
+    assert "Usage: /addsymptom" in messenger.sent[-1]
+    assert conn.execute("SELECT COUNT(*) AS n FROM symptoms").fetchone()["n"] == 0
+
+
+def test_symptom_command_can_still_clarify(conn):
+    llm = FakeLLM([
+        LLMResponse(data={"needs_clarification": True, "question": "How bad, 1-5?"}),
+        LLMResponse(data={"needs_clarification": False, "symptoms": [_symptom("headache", severity=4)]}),
+    ])
+    messenger = FakeMessenger()
+    handle_message("/addsymptom off", chat_id="c1", llm=llm, conn=conn, messenger=messenger)
+    assert messenger.sent[-1] == "How bad, 1-5?"
+    handle_message("a 4", chat_id="c1", llm=llm, conn=conn, messenger=messenger)
+    assert conn.execute("SELECT COUNT(*) AS n FROM symptoms").fetchone()["n"] == 1
+
+
 def test_handle_message_note_appended_to_diet(conn, tmp_path):
     diet = tmp_path / "diet.md"
     diet.write_text("# Profile\n")
@@ -284,7 +313,7 @@ def test_target_command(conn):
 def test_weight_command_updates_metric(conn):
     from xirtun import targets
     messenger = FakeMessenger()
-    handle_message("/weight 72", chat_id="c1", llm=FakeLLM(), conn=conn, messenger=messenger)
+    handle_message("/addweight 72", chat_id="c1", llm=FakeLLM(), conn=conn, messenger=messenger)
     assert "72" in messenger.sent[-1]
     assert targets.read_metrics(conn)["weight_kg"] == 72
 
@@ -295,7 +324,7 @@ def test_food_command_registers(conn):
         "name": "Lidl vegan sausage", "calories": 250, "protein_g": 18, "fat_g": 12, "carbs_g": 4, "tags": [],
     })])
     messenger = FakeMessenger()
-    handle_message("/food Lidl vegan sausage: 250kcal 18p 12f 4c", chat_id="c1", llm=llm, conn=conn, messenger=messenger)
+    handle_message("/savefood Lidl vegan sausage: 250kcal 18p 12f 4c", chat_id="c1", llm=llm, conn=conn, messenger=messenger)
     assert "Saved" in messenger.sent[-1]
     assert "Lidl vegan sausage" in foods.names(conn)
 
@@ -330,6 +359,76 @@ def test_known_food_overrides_macros(conn):
     assert row["protein_g"] == 36   # 18/100 * 200
 
 
+def test_late_meal_triggers_upright_nudge_once_per_evening(conn):
+    now = datetime(2026, 7, 6, 21, 30, tzinfo=timezone.utc)
+
+    def llm_for(occurred):
+        return FakeLLM([
+            LLMResponse(data={"intent": "meal"}),
+            LLMResponse(data={"needs_clarification": False, "meals": [
+                _meal([{"name": "toast", "calories": 200}], occurred_at=occurred),
+            ]}),
+        ])
+
+    messenger = FakeMessenger()
+    handle_message("toast at 21:00", chat_id="c1", llm=llm_for("2026-07-06T21:00:00"),
+                   conn=conn, messenger=messenger, now=now)
+    assert any("stay upright" in m for m in messenger.sent)
+
+    # A second late entry the same evening must not nag again.
+    messenger2 = FakeMessenger()
+    handle_message("cookies", chat_id="c1", llm=llm_for("2026-07-06T21:20:00"),
+                   conn=conn, messenger=messenger2, now=now)
+    assert not any("stay upright" in m for m in messenger2.sent)
+
+
+def test_backdated_late_meal_gets_no_nudge(conn):
+    """Logging yesterday's 22:00 dinner this morning — 'stay upright now' would be
+    nonsense, so the nudge only fires when eating time is within ~3h of logging."""
+    now = datetime(2026, 7, 7, 9, 0, tzinfo=timezone.utc)
+    llm = FakeLLM([
+        LLMResponse(data={"intent": "meal"}),
+        LLMResponse(data={"needs_clarification": False, "meals": [
+            _meal([{"name": "pasta", "calories": 600}], occurred_at="2026-07-06T22:00:00"),
+        ]}),
+    ])
+    messenger = FakeMessenger()
+    handle_message("last night I ate pasta at 10pm", chat_id="c1", llm=llm,
+                   conn=conn, messenger=messenger, now=now)
+    assert not any("stay upright" in m for m in messenger.sent)
+
+
+def test_meal_fiber_stored_and_acked(conn):
+    llm = FakeLLM([
+        LLMResponse(data={"intent": "meal"}),
+        LLMResponse(data={"needs_clarification": False, "meals": [
+            _meal([{"name": "lentils", "calories": 230, "fiber_g": 15.6},
+                   {"name": "seeded bread", "calories": 208, "fiber_g": 6.0}]),
+        ]}),
+    ])
+    messenger = FakeMessenger()
+    handle_message("lentils and seeded bread", chat_id="c1", llm=llm, conn=conn, messenger=messenger)
+
+    row = conn.execute("SELECT SUM(fiber_g) AS f FROM meal_items").fetchone()
+    assert row["f"] == 21.6
+    assert "22g fibre" in messenger.sent[-1]           # rounded total in the ack
+
+
+def test_known_food_fiber_overrides(conn):
+    from xirtun.storage import foods
+    foods.add(conn, {"name": "seeded bread", "calories": 250, "fiber_g": 7.0, "tags": []})
+    llm = FakeLLM([
+        LLMResponse(data={"intent": "meal"}),
+        LLMResponse(data={"needs_clarification": False, "meals": [
+            _meal([{"name": "seeded bread", "known_food": "seeded bread", "quantity_g": 100, "calories": 999}]),
+        ]}),
+    ])
+    handle_message("100g seeded bread", chat_id="c1", llm=llm, conn=conn, messenger=FakeMessenger())
+
+    row = conn.execute("SELECT fiber_g FROM meal_items").fetchone()
+    assert row["fiber_g"] == 7.0                       # label value, per 100g × 100g
+
+
 def test_known_food_match_renames_to_saved_name(conn):
     """The confirmation shows the real saved product's name, not whatever generic
     name the model used — so a wrong match is visible instead of hidden."""
@@ -355,7 +454,7 @@ def test_myfood_lists_saved(conn):
     from xirtun.storage import foods
     foods.add(conn, {"name": "Tofu", "calories": 120, "protein_g": 12})
     messenger = FakeMessenger()
-    handle_message("/myfood", chat_id="c1", llm=FakeLLM(), conn=conn, messenger=messenger)
+    handle_message("/foodlist", chat_id="c1", llm=FakeLLM(), conn=conn, messenger=messenger)
     assert "Tofu" in messenger.sent[-1]
 
 
@@ -373,7 +472,7 @@ def test_food_duplicate_confirm_then_update(conn):
     llm = FakeLLM([LLMResponse(data={"name": "myway falafel", "calories": 200, "protein_g": 20})])
     messenger = FakeMessenger()
 
-    handle_message("/food myway falafel: 200 kcal, 20g protein", chat_id="c1", llm=llm, conn=conn, messenger=messenger)
+    handle_message("/savefood myway falafel: 200 kcal, 20g protein", chat_id="c1", llm=llm, conn=conn, messenger=messenger)
     assert "update" in messenger.sent[-1].lower()  # offered update/add/cancel
 
     handle_message("update", chat_id="c1", llm=FakeLLM(), conn=conn, messenger=messenger)
@@ -387,7 +486,7 @@ def test_food_duplicate_cancel_saves_nothing(conn):
     llm = FakeLLM([LLMResponse(data={"name": "myway falafel", "calories": 200})])
     messenger = FakeMessenger()
 
-    handle_message("/food myway falafel: 200 kcal", chat_id="c1", llm=llm, conn=conn, messenger=messenger)
+    handle_message("/savefood myway falafel: 200 kcal", chat_id="c1", llm=llm, conn=conn, messenger=messenger)
     handle_message("cancel", chat_id="c1", llm=FakeLLM(), conn=conn, messenger=messenger)
 
     assert "myway falafel" not in foods.names(conn)                              # not added
@@ -406,7 +505,7 @@ def test_known_food_stores_and_shows_sugar(conn):
     foods.add(conn, {"name": "Cola", "calories": 42, "carbs_g": 10.6, "sugar_g": 10.6})
     assert foods.find_by_name(conn, "Cola")["sugar_g"] == 10.6
     messenger = FakeMessenger()
-    handle_message("/myfood", chat_id="c1", llm=FakeLLM(), conn=conn, messenger=messenger)
+    handle_message("/foodlist", chat_id="c1", llm=FakeLLM(), conn=conn, messenger=messenger)
     assert "S11" in messenger.sent[-1]   # sugar rendered in the food line
 
 
@@ -607,7 +706,7 @@ def test_exercise_command_opens_session_then_logs(conn):
     ])
     messenger = FakeMessenger()
 
-    handle_message("/exercise", chat_id="c1", llm=llm, conn=conn, messenger=messenger)
+    handle_message("/addworkout", chat_id="c1", llm=llm, conn=conn, messenger=messenger)
     assert "what did you do" in messenger.sent[-1].lower()
 
     handle_message("ran 5k", chat_id="c1", llm=llm, conn=conn, messenger=messenger)

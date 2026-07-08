@@ -35,6 +35,7 @@ CREATE TABLE IF NOT EXISTS meal_items (
     fat_g      REAL,
     carbs_g    REAL,
     sugar_g    REAL,
+    fiber_g    REAL,
     tags       TEXT
 );
 
@@ -72,6 +73,7 @@ CREATE TABLE IF NOT EXISTS custom_meals (
     fat_g      REAL,
     carbs_g    REAL,
     sugar_g    REAL,
+    fiber_g    REAL,
     created_at TEXT NOT NULL
 );
 
@@ -139,8 +141,8 @@ def _migrate(conn: sqlite3.Connection) -> None:
                 conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} REAL")
 
     add_missing("known_foods", ("package_g", "fiber_g", "sugar_g"))
-    add_missing("meal_items", ("sugar_g",))
-    add_missing("custom_meals", ("sugar_g",))
+    add_missing("meal_items", ("sugar_g", "fiber_g"))
+    add_missing("custom_meals", ("sugar_g", "fiber_g"))
 
 
 # --- key/value helpers (e.g. the Telegram update offset) ---

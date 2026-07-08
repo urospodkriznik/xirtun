@@ -73,7 +73,7 @@ unpredictable for a well-defined task.
 
 ```
 on IncomingMessage:
-    if message is a command (/meal, /undo, /export, ...): handle directly
+    if message is a command (/addmeal, /undo, /export, ...): handle directly
     else:
         intent = cheap_llm.classify(message, diet.md, pending_session?)
             -> one of: meal | symptom | correction | other | continue_meal
@@ -86,7 +86,7 @@ on IncomingMessage:
 ```
 
 Pending-meal boundaries:
-- Explicit start: user sends `/meal`.
+- Explicit start: user sends `/addmeal`.
 - Safety nets, because the user will forget: (a) a pending session auto-closes
   after ~30 min of inactivity; (b) the classifier may return `meal` (new) rather
   than `continue_meal`, which closes the previous session automatically.

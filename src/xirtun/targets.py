@@ -3,6 +3,11 @@
 Metrics (sex, age, height, weight, activity) are captured at onboarding and stored as
 JSON in the kv table; targets use the Mifflin–St Jeor equation. No LLM is involved —
 a target shouldn't cost tokens or change between asks.
+
+The formula is only a PRIOR, though: the weekly agent can persist a *calibrated*
+working target (also in kv) justified by real evidence — weight trend, satiety
+feedback, injury/activity changes. `set_calibrated` clamps to physiological bounds
+so a bad LLM call can never store a dangerous number.
 """
 
 from __future__ import annotations
@@ -15,6 +20,7 @@ from typing import Any
 from xirtun.storage import db
 
 _METRICS_KEY = "metrics"
+_CALIBRATED_KEY = "calibrated_targets"
 _REQUIRED = ("sex", "birth_year", "height_cm", "weight_kg", "activity")
 _ACTIVITY_FACTORS = {
     "sedentary": 1.2,
@@ -76,7 +82,7 @@ def format_weight_trend(conn: sqlite3.Connection, now: datetime | None = None, d
     if not history:
         return (
             f"No weights logged in the last {days} days. Without a trend, the calorie "
-            "target below is only an ESTIMATE — ask the user to log /weight regularly so "
+            "target below is only an ESTIMATE — ask the user to log /addweight regularly so "
             "intake can be judged against reality, not the formula."
         )
     if len(history) == 1:
@@ -107,21 +113,25 @@ def age_from(metrics: dict[str, Any], today: date | None = None) -> int | None:
     return today.year - birth_year - (0 if had_birthday_this_year else 1)
 
 
+def _bmr(metrics: dict[str, Any], today: date | None = None) -> float:
+    """Mifflin–St Jeor basal metabolic rate. Assumes complete metrics."""
+    sex = metrics["sex"]
+    sex_constant = 5 if sex == "male" else (-161 if sex == "female" else -78)
+    return (
+        10 * metrics["weight_kg"]
+        + 6.25 * metrics["height_cm"]
+        - 5 * age_from(metrics, today)
+        + sex_constant
+    )
+
+
 def compute(metrics: dict[str, Any], today: date | None = None) -> dict[str, int] | None:
     """Maintenance calories (Mifflin–St Jeor × activity) and a protein target, or
     None if any required metric is missing."""
     if not all(metrics.get(key) is not None for key in _REQUIRED):
         return None
 
-    sex = metrics["sex"]
-    sex_constant = 5 if sex == "male" else (-161 if sex == "female" else -78)
-    bmr = (
-        10 * metrics["weight_kg"]
-        + 6.25 * metrics["height_cm"]
-        - 5 * age_from(metrics, today)
-        + sex_constant
-    )
-    tdee = bmr * _ACTIVITY_FACTORS.get(metrics["activity"], 1.375)
+    tdee = _bmr(metrics, today) * _ACTIVITY_FACTORS.get(metrics["activity"], 1.375)
     lo, hi = _PROTEIN_RANGE.get(metrics["activity"], (1.4, 1.6))
     return {
         "calories": round(tdee),
@@ -135,12 +145,97 @@ def format_targets(metrics: dict[str, Any]) -> str:
     if targets is None:
         return (
             "I don't have your full metrics yet (sex, year of birth, height, weight, "
-            "activity). Re-run onboarding to set them, and use /weight to keep your "
+            "activity). Re-run onboarding to set them, and use /addweight to keep your "
             "weight current."
         )
     protein = f"{targets['protein_min_g']}–{targets['protein_max_g']}g"
     return (
-        f"Maintenance: ~{targets['calories']} kcal/day, {protein} protein/day "
-        f"(from {metrics['weight_kg']}kg, {metrics['height_cm']}cm, age {age_from(metrics)}, "
-        f"{metrics['activity']}). Your weekly review tailors this to your goals."
+        f"Formula estimate: ~{targets['calories']} kcal/day, {protein} protein/day "
+        f"(Mifflin–St Jeor from {metrics['weight_kg']}kg, {metrics['height_cm']}cm, "
+        f"age {age_from(metrics)}, {metrics['activity']})."
     )
+
+
+# --- calibrated working targets (set by the weekly agent, persisted in kv) ---
+
+def read_calibrated(conn: sqlite3.Connection) -> dict[str, Any] | None:
+    raw = db.kv_get(conn, _CALIBRATED_KEY)
+    return json.loads(raw) if raw else None
+
+
+def set_calibrated(
+    conn: sqlite3.Connection,
+    *,
+    calories: int,
+    protein_min_g: int,
+    protein_max_g: int,
+    rationale: str,
+    now: datetime | None = None,
+) -> str:
+    """Persist a calibrated working target, clamped to physiological bounds so a bad
+    LLM call can never store a dangerous number: calories within [BMR, 1.5×formula],
+    protein within [0.8, 2.2] g/kg. Returns a confirmation naming any clamping."""
+    metrics = read_metrics(conn)
+    formula = compute(metrics)
+    if formula is None:
+        return "ERROR: can't calibrate targets — body metrics are incomplete."
+    if not rationale.strip():
+        return "ERROR: a rationale is required — say what evidence justifies the change."
+
+    weight = metrics["weight_kg"]
+    lo_cal, hi_cal = round(_bmr(metrics)), round(formula["calories"] * 1.5)
+    lo_pro, hi_pro = round(0.8 * weight), round(2.2 * weight)
+
+    clamped = []
+    calories = int(calories)
+    if not lo_cal <= calories <= hi_cal:
+        calories = min(max(calories, lo_cal), hi_cal)
+        clamped.append(f"calories clamped to {calories} (allowed {lo_cal}–{hi_cal})")
+    protein_min_g = min(max(int(protein_min_g), lo_pro), hi_pro)
+    protein_max_g = min(max(int(protein_max_g), lo_pro), hi_pro)
+    if protein_min_g > protein_max_g:
+        protein_min_g, protein_max_g = protein_max_g, protein_min_g
+
+    now = now or datetime.now().astimezone()
+    db.kv_set(conn, _CALIBRATED_KEY, json.dumps({
+        "calories": calories,
+        "protein_min_g": protein_min_g,
+        "protein_max_g": protein_max_g,
+        "rationale": rationale.strip(),
+        "set_at": now.isoformat(),
+    }))
+    note = f" ({'; '.join(clamped)})" if clamped else ""
+    return (
+        f"Calibrated target saved: ~{calories} kcal/day, "
+        f"{protein_min_g}–{protein_max_g}g protein/day{note}."
+    )
+
+
+def format_calibrated(conn: sqlite3.Connection) -> str:
+    cal = read_calibrated(conn)
+    if cal is None:
+        return (
+            "No calibrated target set yet — the formula estimate above is the working "
+            "target. The weekly review adjusts it as evidence accumulates."
+        )
+    return (
+        f"Current working target (calibrated {cal['set_at'][:10]}): "
+        f"~{cal['calories']} kcal/day, {cal['protein_min_g']}–{cal['protein_max_g']}g "
+        f"protein/day.\nWhy: {cal['rationale']}"
+    )
+
+
+def format_all_targets(conn: sqlite3.Connection) -> str:
+    """Formula estimate + calibrated working target, for /target and the agent."""
+    return f"{format_targets(read_metrics(conn))}\n{format_calibrated(conn)}"
+
+
+def working_target(conn: sqlite3.Connection) -> dict[str, Any] | None:
+    """The number intake should be judged against: the calibrated target if one is
+    set, otherwise the formula estimate. None if metrics are incomplete and nothing
+    is calibrated. Includes a 'source' key ('calibrated' | 'formula')."""
+    cal = read_calibrated(conn)
+    if cal is not None:
+        return {**cal, "source": "calibrated"}
+    formula = compute(read_metrics(conn))
+    return {**formula, "source": "formula"} if formula else None

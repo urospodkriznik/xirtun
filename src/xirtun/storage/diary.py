@@ -45,7 +45,7 @@ def save_meal(
 
     for item in meal["items"]:
         conn.execute(
-            "INSERT INTO meal_items (meal_id, name, quantity_g, calories, protein_g, fat_g, carbs_g, sugar_g, tags) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO meal_items (meal_id, name, quantity_g, calories, protein_g, fat_g, carbs_g, sugar_g, fiber_g, tags) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 meal_id,
                 item["name"],
@@ -55,6 +55,7 @@ def save_meal(
                 item.get("fat_g"),
                 item.get("carbs_g"),
                 item.get("sugar_g"),
+                item.get("fiber_g"),
                 json.dumps(item.get("tags", [])),
             ),
         )
@@ -124,12 +125,40 @@ def meals_since(conn: sqlite3.Connection, since_iso: str) -> list[dict[str, Any]
     result = []
     for r in rows:
         items = conn.execute(
-            "SELECT name, calories, protein_g, fat_g, carbs_g, sugar_g, tags "
+            "SELECT name, calories, protein_g, fat_g, carbs_g, sugar_g, fiber_g, tags "
             "FROM meal_items WHERE meal_id = ?",
             (r["id"],),
         ).fetchall()
         result.append({"occurred_at": r["occurred_at"], "items": [dict(i) for i in items]})
     return result
+
+
+def daily_totals(conn: sqlite3.Connection, since_iso: str) -> list[dict[str, Any]]:
+    """Per-day intake totals (meal count, kcal, protein, fibre) on/after `since_iso`,
+    oldest first. Computed in SQL so the weekly agent reads real arithmetic instead of
+    summing dozens of items itself — LLMs are unreliable at exactly that."""
+    rows = conn.execute(
+        "SELECT date(m.occurred_at) AS day, COUNT(DISTINCT m.id) AS meals, "
+        "COALESCE(SUM(i.calories), 0) AS calories, "
+        "COALESCE(SUM(i.protein_g), 0) AS protein_g, "
+        "COALESCE(SUM(i.fiber_g), 0) AS fiber_g "
+        "FROM meals m JOIN meal_items i ON i.meal_id = m.id "
+        "WHERE m.occurred_at >= ? GROUP BY day ORDER BY day",
+        (since_iso,),
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def late_meal_days(conn: sqlite3.Connection, since_iso: str, *, hour: int = 20) -> list[str]:
+    """Datetimes ('YYYY-MM-DD HH:MM') of meals eaten at/after `hour` o'clock,
+    on/after `since_iso` — the reflux-window check, computed not inferred."""
+    rows = conn.execute(
+        "SELECT occurred_at FROM meals "
+        "WHERE occurred_at >= ? AND CAST(strftime('%H', occurred_at) AS INTEGER) >= ? "
+        "ORDER BY occurred_at",
+        (since_iso, hour),
+    ).fetchall()
+    return [r["occurred_at"][:16].replace("T", " ") for r in rows]
 
 
 def symptoms_since(conn: sqlite3.Connection, since_iso: str) -> list[dict[str, Any]]:
@@ -160,7 +189,7 @@ def all_meals(conn: sqlite3.Connection) -> list[dict[str, Any]]:
     result = []
     for r in rows:
         items = conn.execute(
-            "SELECT name, quantity_g, calories, protein_g, fat_g, carbs_g, sugar_g, tags "
+            "SELECT name, quantity_g, calories, protein_g, fat_g, carbs_g, sugar_g, fiber_g, tags "
             "FROM meal_items WHERE meal_id = ? ORDER BY id",
             (r["id"],),
         ).fetchall()
@@ -202,7 +231,7 @@ def last_entry(
 ) -> dict[str, Any] | None:
     """The most recent entry the user created — a logged meal/symptom/exercise, or a
     saved food/meal — without deleting it. Saved items compare by created_at so /undo
-    can take back a /food or /savemeal the same way it takes back a logged meal.
+    can take back a /savefood or /savemeal the same way it takes back a logged meal.
 
     `extra_candidates` lets a caller fold in entries that don't live in this database
     (e.g. a note in diet.md) so recency is compared across both — each is

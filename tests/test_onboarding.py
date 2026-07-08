@@ -242,7 +242,7 @@ def test_timezone_command_sets_kv_and_notifies_callback(conn, tmp_path):
     changed = []
 
     dispatch(
-        "/timezone Europe/Ljubljana", chat_id="c1", llm=FakeLLM(), conn=conn, messenger=messenger,
+        "/settimezone Europe/Ljubljana", chat_id="c1", llm=FakeLLM(), conn=conn, messenger=messenger,
         diet_path=diet, on_timezone_change=changed.append,
     )
 
@@ -260,7 +260,7 @@ def test_timezone_command_rejects_invalid_zone(conn, tmp_path):
     changed = []
 
     dispatch(
-        "/timezone Mars/Olympus", chat_id="c1", llm=FakeLLM(), conn=conn, messenger=messenger,
+        "/settimezone Mars/Olympus", chat_id="c1", llm=FakeLLM(), conn=conn, messenger=messenger,
         diet_path=diet, on_timezone_change=changed.append,
     )
 
@@ -274,7 +274,7 @@ def test_timezone_command_without_argument_shows_usage(conn, tmp_path):
     diet.write_text("# Profile")
     messenger = FakeMessenger()
 
-    dispatch("/timezone", chat_id="c1", llm=FakeLLM(), conn=conn, messenger=messenger, diet_path=diet)
+    dispatch("/settimezone", chat_id="c1", llm=FakeLLM(), conn=conn, messenger=messenger, diet_path=diet)
 
     assert "usage" in messenger.sent[-1].lower()
 
@@ -287,7 +287,7 @@ def test_timezone_command_works_before_onboarding(tmp_path, conn):
     diet = tmp_path / "diet.md"  # empty -> would normally route to onboarding
     messenger = FakeMessenger()
 
-    dispatch("/timezone Europe/Ljubljana", chat_id="c1", llm=FakeLLM(), conn=conn, messenger=messenger, diet_path=diet)
+    dispatch("/settimezone Europe/Ljubljana", chat_id="c1", llm=FakeLLM(), conn=conn, messenger=messenger, diet_path=diet)
 
     assert db.get_timezone(conn, "default") == ZoneInfo("Europe/Ljubljana")
     assert memory.is_empty(diet)  # onboarding wasn't touched

@@ -74,6 +74,59 @@ def test_weekly_finishing_with_empty_message_sends_nothing(conn, tmp_path):
     assert result.questions == []
 
 
+def test_agent_can_calibrate_targets(conn, tmp_path):
+    """The set_targets tool persists a calibrated working target the user then sees."""
+    from xirtun import targets
+    from xirtun.agent.tools import ToolContext, build_dispatch
+    from datetime import datetime
+
+    targets.write_metrics(conn, {"sex": "male", "birth_year": 1994, "height_cm": 180,
+                                 "weight_kg": 80, "activity": "moderate"})
+    ctx = ToolContext(conn=conn, diet_path=tmp_path / "d.md",
+                      observations_path=tmp_path / "o.md", now=datetime(2026, 7, 6, 17, 0))
+    dispatch = build_dispatch(ctx)
+
+    result = dispatch["set_targets"]({
+        "calories": 2300, "protein_min_g": 110, "protein_max_g": 130,
+        "rationale": "injury week; user reports fullness at higher intake",
+    })
+    assert "2300" in result
+    assert "2300" in dispatch["get_targets"]({})       # visible on next read
+    assert targets.read_calibrated(conn)["calories"] == 2300
+
+
+def test_intake_summary_computes_daily_totals_and_target_comparison(conn, tmp_path):
+    """The agent's numbers come from SQL, not model arithmetic: per-day totals,
+    averages over logged days only, working-target comparison, late-meal list."""
+    from datetime import datetime
+    from xirtun import targets
+    from xirtun.agent.tools import ToolContext, build_dispatch
+    from xirtun.storage import diary
+
+    targets.write_metrics(conn, {"sex": "male", "birth_year": 1994, "height_cm": 180,
+                                 "weight_kg": 80, "activity": "moderate"})
+    targets.set_calibrated(conn, calories=2400, protein_min_g=110, protein_max_g=130,
+                           rationale="test calibration")
+
+    def meal(occurred_at, kcal, protein, fiber):
+        return {"occurred_at": occurred_at, "notes": None,
+                "items": [{"name": "x", "calories": kcal, "protein_g": protein, "fiber_g": fiber}]}
+
+    diary.save_meal(conn, "a", meal("2026-07-06T09:00:00", 500, 30, 8))
+    diary.save_meal(conn, "b", meal("2026-07-06T21:15:00", 700, 40, 4))   # late meal
+    diary.save_meal(conn, "c", meal("2026-07-07T12:00:00", 1200, 50, 10))
+
+    ctx = ToolContext(conn=conn, diet_path=tmp_path / "d.md",
+                      observations_path=tmp_path / "o.md", now=datetime(2026, 7, 8, 17, 0))
+    out = build_dispatch(ctx)["get_intake_summary"]({"since_days": 7})
+
+    assert "2026-07-06: 2 meal(s), ~1200 kcal, 70g protein, 12g fibre" in out
+    assert "~1200 kcal/day" in out                     # avg over the 2 logged days
+    assert "calibrated): ~2400 kcal/day" in out
+    assert "50% of target" in out                      # 1200/2400, computed in code
+    assert "2026-07-06 21:15" in out                   # late-meal listed
+
+
 def test_weekly_respects_max_iters(conn, tmp_path):
     # Model never finishes (always asks for a tool) -> loop must stop and send nothing.
     llm = FakeLLM([LLMResponse(data=_action(tool="read_diet")) for _ in range(10)])

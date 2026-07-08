@@ -38,6 +38,7 @@ logger = logging.getLogger(__name__)
 COMMANDS = [
     ("meal", "Start a new meal entry"),
     ("exercise", "Log a workout"),
+    ("symptom", "Log how you feel"),
     ("note", "Save a note or goal for your weekly review"),
     ("undo", "Remove your last logged entry"),
     ("today", "Today's meals and totals"),
@@ -78,7 +79,7 @@ def make_intake_handler(
     def handle(message: IncomingMessage) -> None:
         logger.info("recv from %s: %s", message.sender_id, message.text)
         # Re-read per message (not captured once) so a timezone set via onboarding
-        # or /timezone takes effect immediately, without a restart.
+        # or /settimezone takes effect immediately, without a restart.
         tz = db.get_timezone(conn, default_tz)
         dispatch(
             message.text,

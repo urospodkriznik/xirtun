@@ -48,17 +48,18 @@ logger = logging.getLogger(__name__)
 # message (even ones unrelated to it) until the 30-minute session timeout elapses.
 CANCEL_WORDS = {"cancel", "nevermind", "never mind", "stop"}
 
-MEAL_COMMANDS = {"/meal"}
-EXERCISE_COMMANDS = {"/exercise", "/workout"}
+MEAL_COMMANDS = {"/addmeal"}
+EXERCISE_COMMANDS = {"/addworkout"}
 
 HELP_TEXT = (
     "Just tell me what you ate, how you feel, or what exercise you did, in plain "
     "language, and I'll log it. You can also share goals or notes (e.g. 'I want to "
     "gain muscle') or save a food.\n\n"
     "Commands:\n"
-    "/meal — start a new meal entry\n"
-    "/exercise — log a workout\n"
-    "/note <text> — save a note or goal for your weekly review\n"
+    "/addmeal — start a new meal entry\n"
+    "/addworkout — log a workout\n"
+    "/addsymptom <text> — log how you feel\n"
+    "/addnote <text> — save a note or goal for your weekly review\n"
     "/undo — remove your last entry (asks to confirm)\n"
     "/today — today's meals and totals\n"
     "/week — the past 7 days\n"
@@ -67,21 +68,22 @@ HELP_TEXT = (
     "/lastworkouts — your last 3 workouts\n"
     "/lastnotes — your last 3 notes\n"
     "/shop — suggest a shopping list\n"
-    "/food <name>: <per-100g nutrition> — save a food's label\n"
-    "/myfood — list your saved foods\n"
+    "/savefood <name>: <per-100g nutrition> — save a food's label\n"
+    "/foodlist — list your saved foods\n"
     "/checkfood <name> — check if a food is saved\n"
     "/delfood <name> — remove a saved food\n"
     "/savemeal <name>: <ingredients> — save a recurring meal\n"
-    "/mymeals — list your saved meals\n"
+    "/meallist — list your saved meals\n"
     "/delmeal <name> — remove a saved meal\n"
     "/target — your daily calorie & protein target\n"
-    "/weight <kg> — update your weight\n"
-    "/activity <description> — update your activity level in plain language\n"
+    "/addweight <kg> — update your weight\n"
+    "/setactivity <description> — update your activity level in plain language\n"
     "/export — download your diary as a JSON backup\n"
-    "/userinfo — show your profile and body metrics\n"
+    "/profile — show your profile and body metrics\n"
     "/weekly — run your weekly review now\n"
-    "/timezone <IANA name> — set your timezone, e.g. /timezone Europe/Ljubljana\n"
-    "/cleardata — erase everything (asks to confirm)"
+    "/settimezone <IANA name> — set your timezone, e.g. /settimezone Europe/Ljubljana\n"
+    "/cleardata — erase everything (asks to confirm)\n"
+    "/skip — skip a weekly-review question"
 )
 
 
@@ -101,7 +103,7 @@ def _fmt_occurred(occurred_at: str | None) -> str:
 
 def format_ack(meals: list[dict[str, Any]]) -> str:
     """Confirmation summarizing the meal(s) logged, with per-item and total macros."""
-    all_totals = {"calories": 0.0, "protein_g": 0.0, "fat_g": 0.0, "carbs_g": 0.0, "sugar_g": 0.0}
+    all_totals = {"calories": 0.0, "protein_g": 0.0, "fat_g": 0.0, "carbs_g": 0.0, "sugar_g": 0.0, "fiber_g": 0.0}
     lines = []
     header = "Meal logged:" if len(meals) == 1 else f"Logged {len(meals)} meals:"
     lines.append(header)
@@ -125,7 +127,8 @@ def format_ack(meals: list[dict[str, Any]]) -> str:
         f"Total{time_str}: ~{round(all_totals['calories'])} kcal — "
         f"{round(all_totals['protein_g'])}g protein, "
         f"{round(all_totals['fat_g'])}g fat, {round(all_totals['carbs_g'])}g carbs "
-        f"(incl. {round(all_totals['sugar_g'])}g sugar)."
+        f"(incl. {round(all_totals['sugar_g'])}g sugar), "
+        f"{round(all_totals['fiber_g'])}g fibre."
     )
     lines.append(total)
     return "\n".join(lines)
@@ -170,17 +173,25 @@ def handle_message(
 
     if text in EXERCISE_COMMANDS:
         sessions.upsert(conn, chat_id, "exercise", "", now=now)
-        messenger.send("New exercise — what did you do?")
+        messenger.send("New workout — what did you do?")
         return
 
-    if text.startswith("/note"):
-        payload = text[len("/note"):].strip()
+    if text.startswith("/addnote"):
+        payload = text[len("/addnote"):].strip()
         if not payload:
-            messenger.send("Usage: /note <anything you want to remember>")
+            messenger.send("Usage: /addnote <anything you want to remember>")
         elif diet_path is not None:
             _process_note(payload, diet_path=diet_path, messenger=messenger, now=now)
         else:
             messenger.send("Notes aren't available right now.")
+        return
+
+    if text.startswith("/addsymptom"):
+        payload = text[len("/addsymptom"):].strip()
+        if payload:
+            _process_symptom(payload, chat_id=chat_id, llm=llm, conn=conn, messenger=messenger, now=now)
+        else:
+            messenger.send("Usage: /addsymptom <how you feel> — e.g. /addsymptom bloated since this morning")
         return
 
     if text == "/undo":
@@ -203,7 +214,7 @@ def handle_message(
     if text == "/help":
         messenger.send(HELP_TEXT)
         return
-    if text in {"/profile", "/userinfo"}:
+    if text == "/profile":
         messenger.send(_format_userinfo(conn, diet_path))
         return
     if text == "/today":
@@ -230,12 +241,12 @@ def handle_message(
             conn=conn, diet_path=diet_path, llm=llm, messenger=messenger, now=now,
         )
         return
-    if text == "/myfood":
+    if text == "/foodlist":
         rows = foods.all_rows(conn)
         if rows:
             messenger.send("Your saved foods:\n" + "\n".join("- " + _food_line(r) for r in rows))
         else:
-            messenger.send("You haven't saved any foods yet. Use /food to add one.")
+            messenger.send("You haven't saved any foods yet. Use /savefood to add one.")
         return
     if text.startswith("/checkfood"):
         query = text[len("/checkfood"):].strip()
@@ -266,7 +277,7 @@ def handle_message(
         else:
             messenger.send("Usage: /savemeal <name>: <ingredients with portions>")
         return
-    if text == "/mymeals":
+    if text == "/meallist":
         rows = custom_meals.all_rows(conn)
         if rows:
             messenger.send(
@@ -293,35 +304,35 @@ def handle_message(
             else:
                 messenger.send(f"No saved meal named '{name}'.")
         return
-    if text.startswith("/food"):
-        payload = text[len("/food"):].strip()
+    if text.startswith("/savefood"):
+        payload = text[len("/savefood"):].strip()
         if payload:
             _process_food(payload, chat_id=chat_id, conn=conn, llm=llm, messenger=messenger, now=now)
         else:
             messenger.send(
-                "Usage: /food <name>: per 100g — e.g. /food Lidl vegan sausage: "
+                "Usage: /savefood <name>: per 100g — e.g. /savefood Lidl vegan sausage: "
                 "250 kcal, 18g protein, 12g fat, 4g carbs"
             )
         return
     if text == "/target":
         messenger.send(
-            targets.format_targets(targets.read_metrics(conn))
+            targets.format_all_targets(conn)
             + "\n\n"
             + targets.format_weight_trend(conn, now=now)
         )
         return
-    if text.startswith("/weight"):
+    if text.startswith("/addweight"):
         parts = text.split()
         try:
             targets.update_weight(conn, float(parts[1]), now=now)
             messenger.send(f"Updated your weight to {float(parts[1]):g} kg.")
         except (IndexError, ValueError):
-            messenger.send("Usage: /weight 75")
+            messenger.send("Usage: /addweight 75")
         return
-    if text.startswith("/activity"):
-        description = text[len("/activity"):].strip()
+    if text.startswith("/setactivity"):
+        description = text[len("/setactivity"):].strip()
         if not description:
-            messenger.send("Usage: /activity <description>  e.g. /activity I train hard 3 days and walk the rest")
+            messenger.send("Usage: /setactivity <description>  e.g. /setactivity I train hard 3 days and walk the rest")
         else:
             _update_activity(description, llm=llm, conn=conn, messenger=messenger, diet_path=diet_path)
         return
@@ -501,7 +512,49 @@ def _process_meal(
         _apply_known_foods(conn, meal)
         diary.save_meal(conn, text, meal, now=now)
     messenger.send(format_ack(draft["meals"]))
+    _maybe_late_meal_nudge(conn, draft["meals"], messenger=messenger, now=now)
     sessions.clear(conn, chat_id)
+
+
+# A meal eaten at/after this hour, logged close to real time, triggers the stay-upright
+# nudge — a fixed threshold instead of asking the user to log a bedtime (deliberately:
+# no extra logging burden; the nudge is reactive, not another thing to remember).
+LATE_MEAL_HOUR = 20
+_LATE_NUDGE_KEY = "late_meal_nudge_date"
+
+
+def _maybe_late_meal_nudge(
+    conn: sqlite3.Connection,
+    meals: list[dict[str, Any]],
+    *,
+    messenger: Messenger,
+    now: datetime | None,
+) -> None:
+    """After a late-evening meal logged in (near) real time, nudge once per evening to
+    stay upright — reflux acts at the moment of eating, not in Sunday's retrospective.
+    Skipped for backdated entries ('yesterday's dinner'), where 'stay upright now' would
+    be nonsense, and deduped per evening so a dinner + late snack doesn't nag twice."""
+    now = now or datetime.now().astimezone()
+    for meal in meals:
+        raw = meal.get("occurred_at")
+        try:
+            eaten = datetime.fromisoformat(raw) if raw else now
+        except (ValueError, TypeError):
+            continue
+        if eaten.tzinfo is None:                       # model timestamps are local-naive
+            eaten = eaten.replace(tzinfo=now.tzinfo)
+        recent = timedelta(0) <= now - eaten <= timedelta(hours=3)
+        if eaten.hour < LATE_MEAL_HOUR or not recent:
+            continue
+        evening = eaten.date().isoformat()
+        if db.kv_get(conn, _LATE_NUDGE_KEY) == evening:
+            return                                     # already nudged tonight
+        db.kv_set(conn, _LATE_NUDGE_KEY, evening)
+        messenger.send(
+            "🌙 Late meal — try to stay upright for the next 2–3 hours before lying "
+            "down; going horizontal on a full stomach is what triggers reflux."
+        )
+        return
 
 
 def _process_symptom(
@@ -814,7 +867,7 @@ def _apply_known_foods(conn: sqlite3.Connection, meal: dict[str, Any]) -> None:
         if food is None:
             continue
         factor = quantity / 100.0
-        for key in ("calories", "protein_g", "fat_g", "carbs_g", "sugar_g"):
+        for key in ("calories", "protein_g", "fat_g", "carbs_g", "sugar_g", "fiber_g"):
             if food.get(key) is not None:
                 item[key] = round(food[key] * factor, 1)
         # Show the saved product's real name, not whatever the model called it — so a
@@ -915,7 +968,7 @@ def _update_activity(
 
     messenger.send(
         f"Updated activity to '{level}' — {result.data['explanation']}\n"
-        f"New target: {targets.format_targets(targets.read_metrics(conn))}"
+        f"{targets.format_all_targets(conn)}"
     )
 
 
@@ -926,9 +979,9 @@ def _process_timezone_command(
     messenger: Messenger,
     on_timezone_change: Callable[[tzinfo], None] | None,
 ) -> None:
-    tz_name = command[len("/timezone"):].strip()
+    tz_name = command[len("/settimezone"):].strip()
     if not tz_name:
-        messenger.send("Usage: /timezone <IANA name>, e.g. /timezone Europe/Ljubljana")
+        messenger.send("Usage: /settimezone <IANA name>, e.g. /settimezone Europe/Ljubljana")
         return
     try:
         db.set_timezone(conn, tz_name)
@@ -978,7 +1031,7 @@ def dispatch(
         messenger.send("Running your weekly review now…")
         weekly_cb()
         return
-    if command.startswith("/timezone"):
+    if command.startswith("/settimezone"):
         _process_timezone_command(
             command, conn=conn, messenger=messenger, on_timezone_change=on_timezone_change,
         )

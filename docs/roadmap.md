@@ -60,6 +60,18 @@ that guides diet change.
   suggestion (e.g. nutrients for a stated goal) and cite them. (Likely v3.)
 - **Goal-adjusted targets:** the deterministic maintenance target exists; refine it
   with explicit surplus/deficit for the user's stated goal (gain/lose).
+- **"What to eat today" recipe suggester,** two parts:
+  1. Looks at the last week's logged meals to spot what's been missing and
+     proposes something today that fills the gap. Optionally the user can list
+     ingredients they need to use up before they spoil, and suggestions should
+     work around those.
+  2. Learned food preferences: track thumbs-up / thumbs-down / neutral per
+     recipe or meal so it stops re-suggesting things the user dislikes.
+     Conversation shape: agent proposes a recipe; "good, I'll do it" →
+     thumbs-up (save); "I don't like it" → thumbs-down (save); "I don't have
+     lentils right now" → neutral (no save), and it generates another
+     suggestion. The back-and-forth continues until the user confirms/stops,
+     or a 30-minute cooldown elapses.
 
 ### Deployment & CI/CD (planned — build once it's in daily use)
 Goal: push to `main` → tests run → the VM updates and the service restarts. Mirrors

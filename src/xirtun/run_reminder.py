@@ -41,7 +41,7 @@ _DUE_LOOKAHEAD = timedelta(days=1)
 
 REMINDER_TEXT = (
     "⚖️ Weekly check-in: I don't have a recent weight from you, and your review runs "
-    "today. Send /weight <kg> (e.g. /weight 82) so I can judge your calories against "
+    "today. Send /addweight <kg> (e.g. /addweight 82) so I can judge your calories against "
     "the scale instead of just an estimate."
 )
 

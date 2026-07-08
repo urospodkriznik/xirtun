@@ -60,7 +60,7 @@ def start_scheduler(config: Config, conn: sqlite3.Connection) -> BackgroundSched
 
 
 def reschedule(scheduler: BackgroundScheduler, config: Config, tz: tzinfo) -> None:
-    """Rebuild both cron jobs against a new timezone (e.g. after /timezone), so the
+    """Rebuild both cron jobs against a new timezone (e.g. after /settimezone), so the
     change takes effect immediately instead of waiting for a restart."""
     weekly_trigger, reminder_trigger = _triggers(config, tz)
     scheduler.reschedule_job("weekly_review", trigger=weekly_trigger)

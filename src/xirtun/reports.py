@@ -10,7 +10,7 @@ from typing import Any
 from xirtun.memory import diet as memory_diet
 from xirtun.storage import diary
 
-_MACROS = ("calories", "protein_g", "fat_g", "carbs_g", "sugar_g")
+_MACROS = ("calories", "protein_g", "fat_g", "carbs_g", "sugar_g", "fiber_g")
 
 
 def _totals(meals: list[dict[str, Any]]) -> dict[str, float]:
@@ -32,7 +32,8 @@ def today_report(conn: sqlite3.Connection, now: datetime) -> str:
     lines = [
         f"Today — {len(meals)} meal(s), ~{round(t['calories'])} kcal "
         f"({round(t['protein_g'])}g protein, {round(t['fat_g'])}g fat, "
-        f"{round(t['carbs_g'])}g carbs incl. {round(t['sugar_g'])}g sugar):"
+        f"{round(t['carbs_g'])}g carbs incl. {round(t['sugar_g'])}g sugar, "
+        f"{round(t['fiber_g'])}g fibre):"
     ]
     for meal in meals:
         names = ", ".join(item["name"] for item in meal["items"])
@@ -57,7 +58,9 @@ def week_report(conn: sqlite3.Connection, now: datetime) -> str:
         f"~{round(t['calories'])} kcal total "
         f"(~{round(t['calories'] / days_logged)}/day on logged days), "
         f"{round(t['protein_g'])}g protein total "
-        f"(~{round(t['protein_g'] / days_logged)}/day). "
+        f"(~{round(t['protein_g'] / days_logged)}/day), "
+        f"{round(t['fiber_g'])}g fibre total "
+        f"(~{round(t['fiber_g'] / days_logged)}/day). "
         f"Exercise: {len(exercises)} session(s), "
         f"~{round(sum(e.get('calories_burned') or 0 for e in exercises))} kcal burned. "
         f"Symptoms logged: {len(symptoms)}."
