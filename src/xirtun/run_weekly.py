@@ -89,6 +89,19 @@ def run_weekly_review(
             tz=tz,
             now=now,
         )
+        if result.incomplete:
+            # The agent ran out of tool-call turns before it could write the report —
+            # some tool calls (e.g. set_targets) may already have taken effect, but
+            # nothing was ever sent. Marking this "ok" would silently reset the 7-day
+            # guard with nothing delivered; mark it distinctly so last_ok_at (which
+            # only counts status='ok') is untouched and the next scheduled tick retries.
+            logger.warning("weekly review incomplete (ran out of turns) — will retry next tick")
+            messenger.send(
+                "⚠️ Your weekly review didn't finish in time — I'll retry at the next "
+                "scheduled slot rather than send a partial report."
+            )
+            runs.finish(conn, run_id, datetime.now(tz), "incomplete")
+            return True
         _deliver(result, conn=conn, chat_id=chat_id, messenger=messenger, manner=manner, now=now)
         runs.finish(conn, run_id, datetime.now(tz), "ok")
         return True

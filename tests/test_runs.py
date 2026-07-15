@@ -112,6 +112,36 @@ def test_manual_run_holds_report_until_questions_answered(conn, tmp_path):
     assert qa is not None and qa.mode == "interactive" and qa.report == "Your week in review."
 
 
+def test_incomplete_run_does_not_reset_guard_or_send_partial_report(conn, tmp_path):
+    """Regression: if the agent runs out of tool-call turns before writing the
+    report (real bug hit in prod on 2026-07-13 — set_targets/write_observations ran,
+    but max_iters was exhausted before the finishing turn), the run must NOT count
+    as 'ok'. Marking it ok would silently reset the 7-day guard with nothing ever
+    sent, so the user gets nothing for another full week."""
+    now = datetime(2026, 1, 8, 17, 0, tzinfo=TZ)
+    messenger = FakeMessenger()
+    # Never finishes — every turn asks for a tool, so run_weekly exhausts max_iters.
+    llm = FakeLLM([
+        LLMResponse(data={"thought": "t", "tool": "read_diet", "args_json": "{}",
+                          "final_message": None, "questions": []})
+        for _ in range(30)
+    ])
+
+    ran = _review(conn, tmp_path, llm, now=now, force=True, messenger=messenger, manner="scheduled")
+
+    assert ran is True
+    assert not any("Your week in review" in m for m in messenger.sent)  # no partial report
+    assert any("didn't finish" in m for m in messenger.sent)            # user is told
+    assert runs.last_ok_at(conn) is None                                 # guard NOT reset
+
+    # A normal scheduled retry (force=False) must not be blocked by the incomplete run.
+    finishing = _finishing_llm(final_message="Real report.")
+    messenger2 = FakeMessenger()
+    ran2 = _review(conn, tmp_path, finishing, now=now, force=False, messenger=messenger2, manner="scheduled")
+    assert ran2 is True
+    assert messenger2.sent == ["Real report."]
+
+
 def test_manual_run_with_no_questions_sends_immediately(conn, tmp_path):
     now = datetime(2026, 1, 8, 9, 0, tzinfo=TZ)
     messenger = FakeMessenger()

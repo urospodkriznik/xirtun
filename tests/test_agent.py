@@ -72,6 +72,7 @@ def test_weekly_finishing_with_empty_message_sends_nothing(conn, tmp_path):
 
     assert result.report == ""
     assert result.questions == []
+    assert result.incomplete is False   # genuinely decided to say nothing, not cut off
 
 
 def test_agent_can_calibrate_targets(conn, tmp_path):
@@ -138,3 +139,4 @@ def test_weekly_respects_max_iters(conn, tmp_path):
 
     assert result.report == ""
     assert result.questions == []
+    assert result.incomplete is True

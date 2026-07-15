@@ -134,11 +134,16 @@ class WeeklyResult(NamedTuple):
 
     Sending is NOT this module's job — the caller (run_weekly.py) decides timing: hold
     the report for /weekly until questions are answered, or send it immediately and
-    follow up for a scheduled run. `report` is "" if there's nothing worth sending.
+    follow up for a scheduled run. `report` is "" if there's nothing worth sending —
+    UNLESS `incomplete` is True, in which case that emptiness means the agent ran out
+    of turns mid-analysis (some tool calls, e.g. set_targets, may already have taken
+    effect) rather than genuinely having nothing to say. The caller must not treat an
+    incomplete run as a successful one — see run_weekly.py's status handling.
     """
 
     report: str
     questions: list[str]
+    incomplete: bool = False
 
 
 def run_weekly(
@@ -149,7 +154,7 @@ def run_weekly(
     observations_path: Path,
     tz: tzinfo,
     now: datetime | None = None,
-    max_iters: int = 8,
+    max_iters: int = 20,
 ) -> WeeklyResult:
     """Run one weekly review's analysis. Does not send anything — see WeeklyResult."""
     now = now or datetime.now(tz)
@@ -177,7 +182,7 @@ def run_weekly(
             continue
 
     logger.warning("weekly run hit max_iters (%d) without finishing", max_iters)
-    return WeeklyResult(report="", questions=[])
+    return WeeklyResult(report="", questions=[], incomplete=True)
 
 
 def _run_tool(dispatch, name: str, args: dict) -> str:
