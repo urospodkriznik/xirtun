@@ -32,6 +32,7 @@ class Item(BaseModel):
     tags: list[str] = Field(default_factory=list)
     known_food: str | None = None      # name of a matching saved food, if any
     custom_meal: str | None = None     # name of a saved custom meal this item stands in for
+    portion: float | None = None       # fraction of the saved custom meal eaten (1 = full, 0.5 = half)
 
 
 class MealEntry(BaseModel):

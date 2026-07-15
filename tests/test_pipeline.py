@@ -384,7 +384,7 @@ def test_late_meal_triggers_upright_nudge_once_per_evening(conn):
 
 def test_backdated_late_meal_gets_no_nudge(conn):
     """Logging yesterday's 22:00 dinner this morning — 'stay upright now' would be
-    nonsense, so the nudge only fires when eating time is within ~3h of logging."""
+    nonsense, so the nudge only fires when eating time is within ~90 min of logging."""
     now = datetime(2026, 7, 7, 9, 0, tzinfo=timezone.utc)
     llm = FakeLLM([
         LLMResponse(data={"intent": "meal"}),
@@ -395,6 +395,35 @@ def test_backdated_late_meal_gets_no_nudge(conn):
     messenger = FakeMessenger()
     handle_message("last night I ate pasta at 10pm", chat_id="c1", llm=llm,
                    conn=conn, messenger=messenger, now=now)
+    assert not any("stay upright" in m for m in messenger.sent)
+
+
+def test_late_meal_recap_logged_hours_later_gets_no_nudge(conn):
+    """A same-evening recap typed well after eating (2h) shouldn't fire 'stay upright now'."""
+    now = datetime(2026, 7, 6, 23, 15, tzinfo=timezone.utc)   # logged 2h15m after eating
+    llm = FakeLLM([
+        LLMResponse(data={"intent": "meal"}),
+        LLMResponse(data={"needs_clarification": False, "meals": [
+            _meal([{"name": "pasta", "calories": 600}], occurred_at="2026-07-06T21:00:00"),
+        ]}),
+    ])
+    messenger = FakeMessenger()
+    handle_message("at 9pm I ate pasta", chat_id="c1", llm=llm,
+                   conn=conn, messenger=messenger, now=now)
+    assert not any("stay upright" in m for m in messenger.sent)
+
+
+def test_late_beverage_only_meal_gets_no_nudge(conn):
+    """A late beer isn't a full stomach — no stay-upright nudge."""
+    now = datetime(2026, 7, 6, 20, 32, tzinfo=timezone.utc)
+    llm = FakeLLM([
+        LLMResponse(data={"intent": "meal"}),
+        LLMResponse(data={"needs_clarification": False, "meals": [
+            _meal([{"name": "beer", "calories": 215}], occurred_at="2026-07-06T20:31:00"),
+        ]}),
+    ])
+    messenger = FakeMessenger()
+    handle_message("i had 0.5l beer", chat_id="c1", llm=llm, conn=conn, messenger=messenger, now=now)
     assert not any("stay upright" in m for m in messenger.sent)
 
 
@@ -745,6 +774,57 @@ def test_savemeal_and_log_by_name_expands(conn):
 
     assert conn.execute("SELECT COUNT(*) AS n FROM meals").fetchone()["n"] == 1
     assert conn.execute("SELECT COUNT(*) AS n FROM meal_items").fetchone()["n"] == 2  # expanded
+
+
+def test_log_partial_portion_of_saved_meal_scales_macros(conn):
+    from xirtun.storage import custom_meals
+
+    custom_meals.add(conn, "breakfast cereals", [
+        {"name": "muesli", "quantity_g": 75, "calories": 280, "protein_g": 8},
+        {"name": "oat milk", "quantity_g": 250, "calories": 120, "protein_g": 3},
+    ])
+    log_llm = FakeLLM([
+        LLMResponse(data={"intent": "meal"}),
+        LLMResponse(data={"needs_clarification": False, "meals": [
+            {"occurred_at": None, "notes": None, "items": [
+                {"name": "breakfast cereals", "custom_meal": "breakfast cereals", "portion": 0.5},
+            ]},
+        ]}),
+    ])
+    messenger = FakeMessenger()
+    handle_message("I ate half a portion of breakfast cereals", chat_id="c1",
+                   llm=log_llm, conn=conn, messenger=messenger)
+
+    rows = conn.execute("SELECT calories, quantity_g FROM meal_items ORDER BY id").fetchall()
+    assert [r["calories"] for r in rows] == [140, 60]      # 280*0.5, 120*0.5
+    assert [r["quantity_g"] for r in rows] == [37.5, 125]  # 75*0.5, 250*0.5
+
+
+def test_log_full_portion_of_saved_meal_unscaled(conn):
+    from xirtun.storage import custom_meals
+
+    custom_meals.add(conn, "lunch bowl", [{"name": "rice", "calories": 300, "quantity_g": 200}])
+    log_llm = FakeLLM([
+        LLMResponse(data={"intent": "meal"}),
+        LLMResponse(data={"needs_clarification": False, "meals": [
+            {"occurred_at": None, "notes": None,
+             "items": [{"name": "lunch bowl", "custom_meal": "lunch bowl"}]},   # no portion -> full
+        ]}),
+    ])
+    messenger = FakeMessenger()
+    handle_message("I ate lunch bowl", chat_id="c1", llm=log_llm, conn=conn, messenger=messenger)
+    row = conn.execute("SELECT calories, quantity_g FROM meal_items").fetchone()
+    assert row["calories"] == 300 and row["quantity_g"] == 200
+
+
+def test_unrecognized_slash_command_is_rejected(conn):
+    """A slash message that matches no command must not be guess-classified (e.g. an old
+    /note becoming a symptom); it gets an 'unknown command' reply instead."""
+    llm = FakeLLM([LLMResponse(data={"intent": "symptom"})])  # would misfire if reached
+    messenger = FakeMessenger()
+    handle_message("/note I feel bloated", chat_id="c1", llm=llm, conn=conn, messenger=messenger)
+    assert "don't recognize that command" in messenger.sent[-1]
+    assert conn.execute("SELECT COUNT(*) AS n FROM symptoms").fetchone()["n"] == 0
 
 
 def test_lastmeals_command(conn):

@@ -384,6 +384,13 @@ def handle_message(
             _process_meal(combined, chat_id=chat_id, llm=llm, conn=conn, messenger=messenger, now=now)
         return
 
+    # A leftover slash message here matched no command above and isn't a session reply —
+    # it's a typo or a renamed command. Say so instead of guessing an intent from it
+    # (e.g. classifying "/note I feel bloated" as a symptom).
+    if text.startswith("/"):
+        messenger.send("Sorry, I don't recognize that command. Send /help to see what I can do.")
+        return
+
     # 3) No session: classify fresh and route.
     intent = classify(llm, text)
     logger.info("intent=%s", intent)
@@ -520,7 +527,29 @@ def _process_meal(
 # nudge — a fixed threshold instead of asking the user to log a bedtime (deliberately:
 # no extra logging burden; the nudge is reactive, not another thing to remember).
 LATE_MEAL_HOUR = 20
+# Only nudge when the meal was logged close to when it was eaten — the advice is
+# "stay upright NOW", so a same-evening recap of an earlier meal shouldn't fire it.
+LATE_MEAL_NUDGE_WINDOW = timedelta(minutes=90)
 _LATE_NUDGE_KEY = "late_meal_nudge_date"
+
+# Substrings that mark an item as a drink. The stay-upright nudge is about a full
+# stomach of food, so a beverage-only entry (a late beer) shouldn't trigger it.
+_BEVERAGE_WORDS = (
+    "beer", "wine", "water", "coffee", "tea", "juice", "soda", "cola", "smoothie",
+    "cocktail", "spirit", "whisky", "whiskey", "vodka", "gin", "rum", "milk",
+    "kombucha", "lemonade", "cider", "drink",
+)
+
+
+def _is_beverage_only(meal: dict[str, Any]) -> bool:
+    """True if every item in the meal looks like a drink (so it's not a 'full stomach')."""
+    items = meal.get("items") or []
+    if not items:
+        return False
+    return all(
+        any(word in (item.get("name") or "").lower() for word in _BEVERAGE_WORDS)
+        for item in items
+    )
 
 
 def _maybe_late_meal_nudge(
@@ -532,10 +561,13 @@ def _maybe_late_meal_nudge(
 ) -> None:
     """After a late-evening meal logged in (near) real time, nudge once per evening to
     stay upright — reflux acts at the moment of eating, not in Sunday's retrospective.
-    Skipped for backdated entries ('yesterday's dinner'), where 'stay upright now' would
-    be nonsense, and deduped per evening so a dinner + late snack doesn't nag twice."""
+    Skipped for backdated/recap entries (logged well after eating), where 'stay upright
+    now' would be nonsense, for beverage-only entries (no full stomach), and deduped per
+    evening so a dinner + late snack doesn't nag twice."""
     now = now or datetime.now().astimezone()
     for meal in meals:
+        if _is_beverage_only(meal):
+            continue
         raw = meal.get("occurred_at")
         try:
             eaten = datetime.fromisoformat(raw) if raw else now
@@ -543,7 +575,7 @@ def _maybe_late_meal_nudge(
             continue
         if eaten.tzinfo is None:                       # model timestamps are local-naive
             eaten = eaten.replace(tzinfo=now.tzinfo)
-        recent = timedelta(0) <= now - eaten <= timedelta(hours=3)
+        recent = timedelta(0) <= now - eaten <= LATE_MEAL_NUDGE_WINDOW
         if eaten.hour < LATE_MEAL_HOUR or not recent:
             continue
         evening = eaten.date().isoformat()
@@ -843,14 +875,31 @@ def _save_custom_meal(
     )
 
 
+# Nutrition fields scaled when only part of a saved meal was eaten.
+_SCALABLE_ITEM_FIELDS = ("quantity_g", "calories", "protein_g", "fat_g", "carbs_g", "sugar_g", "fiber_g")
+
+
+def _scale_item(item: dict[str, Any], factor: float) -> dict[str, Any]:
+    """A copy of `item` with its quantity and macros multiplied by `factor`."""
+    scaled = dict(item)
+    for key in _SCALABLE_ITEM_FIELDS:
+        value = scaled.get(key)
+        if value is not None:
+            scaled[key] = round(value * factor, 1)
+    return scaled
+
+
 def _expand_custom_meals(conn: sqlite3.Connection, meal: dict[str, Any]) -> None:
-    """Replace any item naming a saved custom meal with that meal's stored items."""
+    """Replace any item naming a saved custom meal with that meal's stored items,
+    scaled by `portion` when the user ate only part of it (1 = full portion)."""
     expanded: list[dict[str, Any]] = []
     for item in meal["items"]:
         name = item.get("custom_meal")
         recipe = custom_meals.find_by_name(conn, name) if name else None
         if recipe:
-            expanded.extend(recipe["items"])
+            factor = item.get("portion") or 1.0
+            recipe_items = recipe["items"]
+            expanded.extend(recipe_items if factor == 1.0 else [_scale_item(i, factor) for i in recipe_items])
         else:
             expanded.append(item)
     meal["items"] = expanded
