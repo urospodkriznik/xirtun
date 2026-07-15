@@ -157,11 +157,15 @@ def test_symptom_command_logs_directly(conn):
     assert "Symptom logged: fatigue" in messenger.sent[-1]
 
 
-def test_symptom_command_without_text_shows_usage(conn):
+def test_symptom_command_bare_prompts_then_logs(conn):
     messenger = FakeMessenger()
     handle_message("/addsymptom", chat_id="c1", llm=FakeLLM(), conn=conn, messenger=messenger)
-    assert "Usage: /addsymptom" in messenger.sent[-1]
+    assert "how are you feeling" in messenger.sent[-1].lower()   # prompt, not a log
     assert conn.execute("SELECT COUNT(*) AS n FROM symptoms").fetchone()["n"] == 0
+
+    llm = FakeLLM([LLMResponse(data={"needs_clarification": False, "symptoms": [_symptom("fatigue")]})])
+    handle_message("low energy", chat_id="c1", llm=llm, conn=conn, messenger=messenger)
+    assert conn.execute("SELECT COUNT(*) AS n FROM symptoms").fetchone()["n"] == 1
 
 
 def test_symptom_command_can_still_clarify(conn):
@@ -436,7 +440,8 @@ def test_meal_fiber_stored_and_acked(conn):
         ]}),
     ])
     messenger = FakeMessenger()
-    handle_message("lentils and seeded bread", chat_id="c1", llm=llm, conn=conn, messenger=messenger)
+    noon = datetime(2026, 7, 6, 12, 0, tzinfo=timezone.utc)   # daytime: no late-meal nudge
+    handle_message("lentils and seeded bread", chat_id="c1", llm=llm, conn=conn, messenger=messenger, now=noon)
 
     row = conn.execute("SELECT SUM(fiber_g) AS f FROM meal_items").fetchone()
     assert row["f"] == 21.6
@@ -472,7 +477,8 @@ def test_known_food_match_renames_to_saved_name(conn):
         ]}),
     ])
     messenger = FakeMessenger()
-    handle_message("plate of spinach pasta", chat_id="c1", llm=llm, conn=conn, messenger=messenger)
+    noon = datetime(2026, 7, 6, 12, 0, tzinfo=timezone.utc)   # daytime: no late-meal nudge
+    handle_message("plate of spinach pasta", chat_id="c1", llm=llm, conn=conn, messenger=messenger, now=noon)
 
     assert "combino chickpeas pasta" in messenger.sent[-1]
     row = conn.execute("SELECT name FROM meal_items").fetchone()
@@ -736,10 +742,91 @@ def test_exercise_command_opens_session_then_logs(conn):
     messenger = FakeMessenger()
 
     handle_message("/addworkout", chat_id="c1", llm=llm, conn=conn, messenger=messenger)
-    assert "what did you do" in messenger.sent[-1].lower()
+    assert "workout" in messenger.sent[-1].lower()   # prompt
 
     handle_message("ran 5k", chat_id="c1", llm=llm, conn=conn, messenger=messenger)
     assert conn.execute("SELECT COUNT(*) AS n FROM exercises").fetchone()["n"] == 1
+
+
+def test_meal_command_bare_prompts_then_logs(conn):
+    messenger = FakeMessenger()
+    handle_message("/addmeal", chat_id="c1", llm=FakeLLM(), conn=conn, messenger=messenger)
+    assert "what did you eat" in messenger.sent[-1].lower()   # prompt, no LLM call yet
+
+    noon = datetime(2026, 7, 6, 12, 0, tzinfo=timezone.utc)
+    llm = FakeLLM([LLMResponse(data={"needs_clarification": False,
+                                     "meals": [_meal([{"name": "rice", "calories": 200}])]})])
+    handle_message("rice", chat_id="c1", llm=llm, conn=conn, messenger=messenger, now=noon)
+    assert conn.execute("SELECT COUNT(*) AS n FROM meals").fetchone()["n"] == 1
+
+
+def test_savefood_bare_prompts_then_saves(conn):
+    from xirtun.storage import foods
+    messenger = FakeMessenger()
+    handle_message("/savefood", chat_id="c1", llm=FakeLLM(), conn=conn, messenger=messenger)
+    assert "label" in messenger.sent[-1].lower()   # prompt
+
+    llm = FakeLLM([LLMResponse(data={"name": "Tofu", "calories": 120})])
+    handle_message("Tofu: 120 kcal", chat_id="c1", llm=llm, conn=conn, messenger=messenger)
+    assert "Tofu" in foods.names(conn)
+
+
+def test_delfood_bare_prompts_then_deletes(conn):
+    from xirtun.storage import foods
+    foods.add(conn, {"name": "Tofu", "calories": 120})
+    messenger = FakeMessenger()
+    handle_message("/delfood", chat_id="c1", llm=FakeLLM(), conn=conn, messenger=messenger)
+    assert "which saved food" in messenger.sent[-1].lower()   # prompt
+
+    handle_message("Tofu", chat_id="c1", llm=FakeLLM(), conn=conn, messenger=messenger)
+    assert "Tofu" not in foods.names(conn)
+
+
+def test_pending_command_cancel_logs_nothing(conn):
+    messenger = FakeMessenger()
+    handle_message("/addmeal", chat_id="c1", llm=FakeLLM(), conn=conn, messenger=messenger)
+    handle_message("cancel", chat_id="c1", llm=FakeLLM(), conn=conn, messenger=messenger)
+    assert "Cancelled" in messenger.sent[-1]
+    assert conn.execute("SELECT COUNT(*) AS n FROM meals").fetchone()["n"] == 0
+
+
+def test_pending_command_slash_cancel(conn):
+    messenger = FakeMessenger()
+    handle_message("/addmeal", chat_id="c1", llm=FakeLLM(), conn=conn, messenger=messenger)
+    handle_message("/cancel", chat_id="c1", llm=FakeLLM(), conn=conn, messenger=messenger)
+    assert "Cancelled" in messenger.sent[-1]
+    assert conn.execute("SELECT COUNT(*) AS n FROM meals").fetchone()["n"] == 0
+
+
+def test_pending_command_dropped_when_other_command_runs(conn):
+    """Running a different command mid-prompt drops the pending one, so a later plain
+    message isn't captured as the abandoned command's input."""
+    diary.save_meal(conn, "x", _meal([{"name": "banana", "calories": 100}]))
+    messenger = FakeMessenger()
+
+    handle_message("/addmeal", chat_id="c1", llm=FakeLLM(), conn=conn, messenger=messenger)
+    handle_message("/today", chat_id="c1", llm=FakeLLM(), conn=conn, messenger=messenger)
+    assert "banana" in messenger.sent[-1]   # today report, not still awaiting a meal
+
+    # A following plain message must be classified fresh, not swallowed as a meal.
+    handle_message("hello there", chat_id="c1", llm=FakeLLM([LLMResponse(data={"intent": "other"})]),
+                   conn=conn, messenger=messenger)
+    assert conn.execute("SELECT COUNT(*) AS n FROM meals").fetchone()["n"] == 1  # only the seeded one
+
+
+def test_pending_command_switches_on_new_slash_command(conn, tmp_path):
+    """Mid-prompt, a slash command means 'I changed my mind' — drop the pending meal
+    and run the new command instead."""
+    diet = tmp_path / "diet.md"
+    diet.write_text("# Profile\n")
+    messenger = FakeMessenger()
+
+    handle_message("/addmeal", chat_id="c1", llm=FakeLLM(), conn=conn, messenger=messenger, diet_path=diet)
+    handle_message("/addnote I feel full", chat_id="c1", llm=FakeLLM(), conn=conn,
+                   messenger=messenger, diet_path=diet)
+
+    assert "I feel full" in diet.read_text()
+    assert conn.execute("SELECT COUNT(*) AS n FROM meals").fetchone()["n"] == 0
 
 
 def test_undo_includes_exercise(conn):

@@ -48,8 +48,48 @@ logger = logging.getLogger(__name__)
 # message (even ones unrelated to it) until the 30-minute session timeout elapses.
 CANCEL_WORDS = {"cancel", "nevermind", "never mind", "stop"}
 
-MEAL_COMMANDS = {"/addmeal"}
-EXERCISE_COMMANDS = {"/addworkout"}
+# Input-taking commands. Sent alone, each prompts with a template and opens a
+# PENDING_CMD session so the next message is routed back to it; sent as
+# "command <text>", the text is handled inline. Every prompt advertises /cancel.
+PENDING_CMD = "pending_cmd"
+
+INPUT_COMMANDS = {
+    "/addmeal": "🍽️ What did you eat? e.g. '200g chicken and rice' — or /cancel.",
+    "/addworkout": "🏋️ What workout did you do? e.g. '45 min run' — or /cancel.",
+    "/addsymptom": "🩺 How are you feeling? e.g. 'bloated since this morning' — or /cancel.",
+    "/addnote": "📝 What should I note? e.g. 'I want to gain muscle' — or /cancel.",
+    "/savefood": (
+        "🏷️ Send a food and its per-100g label, e.g.\n"
+        "'Lidl vegan sausage: 250 kcal, 18g protein, 12g fat, 4g carbs'\n"
+        "— or /cancel."
+    ),
+    "/savemeal": (
+        "🥣 Send a meal name and its ingredients, e.g.\n"
+        "'breakfast: 75g muesli, 250ml oat milk, 30g protein powder'\n"
+        "— or /cancel."
+    ),
+    "/delfood": "🗑️ Which saved food should I remove? Send its name — or /cancel.",
+    "/delmeal": "🗑️ Which saved meal should I remove? Send its name — or /cancel.",
+    "/checkfood": "🔎 Which food should I look up? Send its name — or /cancel.",
+    "/addweight": "⚖️ What's your weight in kg? e.g. '75' — or /cancel.",
+    "/setactivity": (
+        "🏃 Describe your activity level, e.g. 'I train hard 3 days and walk the rest' "
+        "— or /cancel."
+    ),
+    # NB: /settimezone is deliberately not here — it's handled in dispatch() so it also
+    # works before onboarding, and keeps its inline-only form.
+}
+
+
+def _match_input_command(text: str) -> tuple[str, str] | None:
+    """If `text` is an input command (alone or with a payload), return (command,
+    payload); payload is '' when the command was sent bare. Otherwise None."""
+    for cmd in INPUT_COMMANDS:
+        if text == cmd:
+            return cmd, ""
+        if text.startswith(cmd + " "):
+            return cmd, text[len(cmd):].strip()
+    return None
 
 HELP_TEXT = (
     "Just tell me what you ate, how you feel, or what exercise you did, in plain "
@@ -165,33 +205,28 @@ def handle_message(
 ) -> None:
     text = text.strip()
 
-    # 1) Explicit "start a new meal" command.
-    if text in MEAL_COMMANDS:
-        sessions.upsert(conn, chat_id, "meal", "", now=now)
-        messenger.send("New meal — tell me what you ate.")
-        return
+    # If a bare command is awaiting its reply and the user sends a slash command instead,
+    # they changed their mind: drop the pending command first (so it can't capture a later
+    # message), then handle what they actually sent. '/cancel' just bails.
+    if text.startswith("/") and sessions.peek_kind(conn, chat_id) == PENDING_CMD:
+        sessions.clear(conn, chat_id)
+        if text.lower().lstrip("/") in CANCEL_WORDS:
+            messenger.send("Cancelled — nothing logged.")
+            return
 
-    if text in EXERCISE_COMMANDS:
-        sessions.upsert(conn, chat_id, "exercise", "", now=now)
-        messenger.send("New workout — what did you do?")
-        return
-
-    if text.startswith("/addnote"):
-        payload = text[len("/addnote"):].strip()
-        if not payload:
-            messenger.send("Usage: /addnote <anything you want to remember>")
-        elif diet_path is not None:
-            _process_note(payload, diet_path=diet_path, messenger=messenger, now=now)
-        else:
-            messenger.send("Notes aren't available right now.")
-        return
-
-    if text.startswith("/addsymptom"):
-        payload = text[len("/addsymptom"):].strip()
+    # 1) Input-taking commands: bare command -> prompt + pending session; command with
+    # text -> handled inline. Either way the same processor runs (see _run_input_command).
+    matched = _match_input_command(text)
+    if matched is not None:
+        cmd, payload = matched
         if payload:
-            _process_symptom(payload, chat_id=chat_id, llm=llm, conn=conn, messenger=messenger, now=now)
+            _run_input_command(
+                cmd, payload, chat_id=chat_id, llm=llm, conn=conn, messenger=messenger,
+                diet_path=diet_path, now=now,
+            )
         else:
-            messenger.send("Usage: /addsymptom <how you feel> — e.g. /addsymptom bloated since this morning")
+            sessions.upsert(conn, chat_id, PENDING_CMD, cmd, now=now)
+            messenger.send(INPUT_COMMANDS[cmd])
         return
 
     if text == "/undo":
@@ -248,35 +283,6 @@ def handle_message(
         else:
             messenger.send("You haven't saved any foods yet. Use /savefood to add one.")
         return
-    if text.startswith("/checkfood"):
-        query = text[len("/checkfood"):].strip()
-        messenger.send(_food_lookup(conn, query) if query else "Usage: /checkfood <name>")
-        return
-    if text.startswith("/delfood"):
-        name = text[len("/delfood"):].strip()
-        if not name:
-            messenger.send("Usage: /delfood <name>")
-        elif foods.delete(conn, name):
-            messenger.send(f"Removed '{name}' from your saved foods.")
-        else:
-            # No exact match — offer the closest saved food, if any, for confirmation.
-            similar = foods.search(conn, name)
-            if similar:
-                sessions.upsert(conn, chat_id, "delfood_confirm", similar[0], now=now)
-                messenger.send(
-                    f"No saved food named '{name}'. Did you mean '{similar[0]}'?\n"
-                    "Reply 'yes' to delete it, or anything else to cancel."
-                )
-            else:
-                messenger.send(f"No saved food named '{name}'.")
-        return
-    if text.startswith("/savemeal"):
-        name, description = _split_name_desc(text[len("/savemeal"):].strip())
-        if name and description:
-            _save_custom_meal(name, description, conn=conn, llm=llm, messenger=messenger, now=now)
-        else:
-            messenger.send("Usage: /savemeal <name>: <ingredients with portions>")
-        return
     if text == "/meallist":
         rows = custom_meals.all_rows(conn)
         if rows:
@@ -287,54 +293,12 @@ def handle_message(
         else:
             messenger.send("You haven't saved any custom meals. Use /savemeal to add one.")
         return
-    if text.startswith("/delmeal"):
-        name = text[len("/delmeal"):].strip()
-        if not name:
-            messenger.send("Usage: /delmeal <name>")
-        elif custom_meals.delete(conn, name):
-            messenger.send(f"Removed saved meal '{name}'.")
-        else:
-            similar = custom_meals.search(conn, name)
-            if similar:
-                sessions.upsert(conn, chat_id, "delmeal_confirm", similar[0], now=now)
-                messenger.send(
-                    f"No saved meal named '{name}'. Did you mean '{similar[0]}'?\n"
-                    "Reply 'yes' to delete it, or anything else to cancel."
-                )
-            else:
-                messenger.send(f"No saved meal named '{name}'.")
-        return
-    if text.startswith("/savefood"):
-        payload = text[len("/savefood"):].strip()
-        if payload:
-            _process_food(payload, chat_id=chat_id, conn=conn, llm=llm, messenger=messenger, now=now)
-        else:
-            messenger.send(
-                "Usage: /savefood <name>: per 100g — e.g. /savefood Lidl vegan sausage: "
-                "250 kcal, 18g protein, 12g fat, 4g carbs"
-            )
-        return
     if text == "/target":
         messenger.send(
             targets.format_all_targets(conn)
             + "\n\n"
             + targets.format_weight_trend(conn, now=now)
         )
-        return
-    if text.startswith("/addweight"):
-        parts = text.split()
-        try:
-            targets.update_weight(conn, float(parts[1]), now=now)
-            messenger.send(f"Updated your weight to {float(parts[1]):g} kg.")
-        except (IndexError, ValueError):
-            messenger.send("Usage: /addweight 75")
-        return
-    if text.startswith("/setactivity"):
-        description = text[len("/setactivity"):].strip()
-        if not description:
-            messenger.send("Usage: /setactivity <description>  e.g. /setactivity I train hard 3 days and walk the rest")
-        else:
-            _update_activity(description, llm=llm, conn=conn, messenger=messenger, diet_path=diet_path)
         return
     if text == "/export":
         messenger.send_document(
@@ -362,6 +326,12 @@ def handle_message(
             return
         if session.kind == "delmeal_confirm":
             _resolve_delmeal(session, text, chat_id=chat_id, conn=conn, messenger=messenger)
+            return
+        if session.kind == PENDING_CMD:
+            _resume_pending_cmd(
+                session, text, chat_id=chat_id, llm=llm, conn=conn, messenger=messenger,
+                diet_path=diet_path, now=now,
+            )
             return
         if session.kind == weekly_qa.KIND:
             qa = weekly_qa.get(conn, chat_id, now=now)
@@ -430,6 +400,124 @@ def _route_intent(
             "I'm not sure what that was — tell me what you ate, how you're feeling, "
             "what exercise you did, or a goal/note to remember."
         )
+
+
+def _run_input_command(
+    cmd: str,
+    payload: str,
+    *,
+    chat_id: str,
+    llm: LLMClient,
+    conn: sqlite3.Connection,
+    messenger: Messenger,
+    diet_path: Path | None,
+    now: datetime | None,
+) -> None:
+    """Run an input command's processor on `payload` — shared by the inline form
+    ('command text') and the prompt-then-reply form (_resume_pending_cmd)."""
+    if cmd == "/addmeal":
+        _process_meal(payload, chat_id=chat_id, llm=llm, conn=conn, messenger=messenger, now=now)
+    elif cmd == "/addworkout":
+        _process_exercise(payload, chat_id=chat_id, llm=llm, conn=conn, messenger=messenger, now=now)
+    elif cmd == "/addsymptom":
+        _process_symptom(payload, chat_id=chat_id, llm=llm, conn=conn, messenger=messenger, now=now)
+    elif cmd == "/addnote":
+        if diet_path is not None:
+            _process_note(payload, diet_path=diet_path, messenger=messenger, now=now)
+        else:
+            messenger.send("Notes aren't available right now.")
+    elif cmd == "/savefood":
+        _process_food(payload, chat_id=chat_id, conn=conn, llm=llm, messenger=messenger, now=now)
+    elif cmd == "/savemeal":
+        name, description = _split_name_desc(payload)
+        if name and description:
+            _save_custom_meal(name, description, conn=conn, llm=llm, messenger=messenger, now=now)
+        else:
+            messenger.send("Usage: /savemeal <name>: <ingredients with portions>")
+    elif cmd == "/delfood":
+        _run_delfood(payload, chat_id=chat_id, conn=conn, messenger=messenger, now=now)
+    elif cmd == "/delmeal":
+        _run_delmeal(payload, chat_id=chat_id, conn=conn, messenger=messenger, now=now)
+    elif cmd == "/checkfood":
+        messenger.send(_food_lookup(conn, payload))
+    elif cmd == "/addweight":
+        _run_addweight(payload, conn=conn, messenger=messenger, now=now)
+    elif cmd == "/setactivity":
+        _update_activity(payload, llm=llm, conn=conn, messenger=messenger, diet_path=diet_path)
+
+
+def _resume_pending_cmd(
+    session,
+    text: str,
+    *,
+    chat_id: str,
+    llm: LLMClient,
+    conn: sqlite3.Connection,
+    messenger: Messenger,
+    diet_path: Path | None,
+    now: datetime | None,
+) -> None:
+    """A plain-text reply to a bare input command's prompt: 'cancel' bails, anything
+    else is the payload the command was waiting for. (A slash command in this spot is
+    intercepted earlier in handle_message and never reaches here.)"""
+    cmd = session.text
+    stripped = text.strip()
+    if stripped.lower() in CANCEL_WORDS:
+        sessions.clear(conn, chat_id)
+        messenger.send("Cancelled — nothing logged.")
+        return
+    sessions.clear(conn, chat_id)   # the processor may open its own (e.g. meal) session
+    _run_input_command(
+        cmd, stripped, chat_id=chat_id, llm=llm, conn=conn, messenger=messenger,
+        diet_path=diet_path, now=now,
+    )
+
+
+def _run_delfood(
+    name: str, *, chat_id: str, conn: sqlite3.Connection, messenger: Messenger, now: datetime | None,
+) -> None:
+    if foods.delete(conn, name):
+        messenger.send(f"Removed '{name}' from your saved foods.")
+        return
+    # No exact match — offer the closest saved food, if any, for confirmation.
+    similar = foods.search(conn, name)
+    if similar:
+        sessions.upsert(conn, chat_id, "delfood_confirm", similar[0], now=now)
+        messenger.send(
+            f"No saved food named '{name}'. Did you mean '{similar[0]}'?\n"
+            "Reply 'yes' to delete it, or anything else to cancel."
+        )
+    else:
+        messenger.send(f"No saved food named '{name}'.")
+
+
+def _run_delmeal(
+    name: str, *, chat_id: str, conn: sqlite3.Connection, messenger: Messenger, now: datetime | None,
+) -> None:
+    if custom_meals.delete(conn, name):
+        messenger.send(f"Removed saved meal '{name}'.")
+        return
+    similar = custom_meals.search(conn, name)
+    if similar:
+        sessions.upsert(conn, chat_id, "delmeal_confirm", similar[0], now=now)
+        messenger.send(
+            f"No saved meal named '{name}'. Did you mean '{similar[0]}'?\n"
+            "Reply 'yes' to delete it, or anything else to cancel."
+        )
+    else:
+        messenger.send(f"No saved meal named '{name}'.")
+
+
+def _run_addweight(
+    payload: str, *, conn: sqlite3.Connection, messenger: Messenger, now: datetime | None,
+) -> None:
+    try:
+        kg = float(payload.split()[0])
+    except (IndexError, ValueError):
+        messenger.send("Usage: /addweight 75")
+        return
+    targets.update_weight(conn, kg, now=now)
+    messenger.send(f"Updated your weight to {kg:g} kg.")
 
 
 _LOG_INTENTS = {"meal", "symptom", "exercise", "food", "shopping"}
