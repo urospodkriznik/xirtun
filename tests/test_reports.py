@@ -52,3 +52,22 @@ def test_recent_notes_report(tmp_path):
     p.write_text("# Profile")
     memory.append_note(p, "gain muscle", now=NOW)
     assert "gain muscle" in reports.recent_notes_report(p)
+
+
+def test_weekly_totals_buckets_by_seven_day_offset(conn):
+    now = datetime(2026, 7, 15, 17, 0, tzinfo=timezone.utc)
+
+    def meal(occurred_at, kcal, protein, fiber):
+        return _meal([{"name": "x", "calories": kcal, "protein_g": protein, "fiber_g": fiber}], occurred_at)
+
+    # Week 0 (last 7 days): two logged days averaging 1000 kcal.
+    diary.save_meal(conn, "a", meal("2026-07-13T09:00:00", 800, 40, 10))
+    diary.save_meal(conn, "b", meal("2026-07-14T09:00:00", 1200, 60, 14))
+    # Week 1 (7–14 days ago): one logged day at 2000 kcal.
+    diary.save_meal(conn, "c", meal("2026-07-07T09:00:00", 2000, 80, 20))
+
+    wk = diary.weekly_totals(conn, now, weeks=4)
+    assert [w["weeks_ago"] for w in wk] == [0, 1, 2, 3]           # newest first, padded
+    assert wk[0]["days_logged"] == 2 and round(wk[0]["avg_calories"]) == 1000
+    assert wk[1]["days_logged"] == 1 and round(wk[1]["avg_calories"]) == 2000
+    assert wk[2]["days_logged"] == 0 and wk[2]["avg_calories"] == 0.0   # empty week padded

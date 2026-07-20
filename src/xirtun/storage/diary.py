@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from datetime import datetime
+from datetime import date, datetime, timedelta
 from typing import Any
 
 
@@ -147,6 +147,40 @@ def daily_totals(conn: sqlite3.Connection, since_iso: str) -> list[dict[str, Any
         (since_iso,),
     ).fetchall()
     return [dict(r) for r in rows]
+
+
+def weekly_totals(conn: sqlite3.Connection, now: datetime, *, weeks: int = 4) -> list[dict[str, Any]]:
+    """Per-week intake aggregates for the last `weeks` weeks, most recent first.
+
+    Week 0 is the trailing 7 days (now-7d .. now), week 1 the 7 days before that, etc.
+    Averages are over days that actually have logged meals, so a sparsely logged week
+    isn't dragged toward zero — `days_logged` is returned alongside so the caller can
+    judge how complete each week was. Bucketing is done here (not the LLM) so
+    week-over-week deltas rest on real arithmetic."""
+    since = (now - timedelta(days=weeks * 7)).isoformat()
+    buckets: dict[int, dict[str, float]] = {}
+    for row in daily_totals(conn, since):
+        idx = (now.date() - date.fromisoformat(row["day"])).days // 7
+        if not 0 <= idx < weeks:
+            continue
+        b = buckets.setdefault(idx, {"days_logged": 0, "calories": 0.0, "protein_g": 0.0, "fiber_g": 0.0})
+        b["days_logged"] += 1
+        b["calories"] += row["calories"]
+        b["protein_g"] += row["protein_g"]
+        b["fiber_g"] += row["fiber_g"]
+
+    result = []
+    for idx in range(weeks):
+        b = buckets.get(idx)
+        d = b["days_logged"] if b else 0
+        result.append({
+            "weeks_ago": idx,
+            "days_logged": d,
+            "avg_calories": (b["calories"] / d) if d else 0.0,
+            "avg_protein_g": (b["protein_g"] / d) if d else 0.0,
+            "avg_fiber_g": (b["fiber_g"] / d) if d else 0.0,
+        })
+    return result
 
 
 def late_meal_days(conn: sqlite3.Connection, since_iso: str, *, hour: int = 20) -> list[str]:

@@ -70,9 +70,11 @@ your data in plain files you own, and talks to no one but you and the model prov
 **Proactive help**
 - **Weekly autonomous review** — a tool-using agent reviews your recent diary, your
   profile, your targets, your **weight trend**, and its own past notes, then sends a
-  **structured report** (overview, energy & macros, nutrient wins, watch-outs, actions)
-  with non-obvious patterns and **actionable** suggestions, framed as things to look
-  into or raise with a doctor — never a diagnosis. It treats the calorie target as an
+  **structured report** (overview, energy & macros, food quality, nutrient wins,
+  watch-outs, actions) with non-obvious patterns and **actionable** suggestions, framed
+  as things to look into or raise with a doctor — never a diagnosis. It compares this
+  week against recent weeks (**week-over-week**, computed in SQL) and gives a plain
+  verdict on how well you actually ate. It treats the calorie target as an
   *estimate* and reconciles it against your weight trend and goal, so it won't tell you
   to eat more while your weight is steady or rising — and when the evidence justifies
   it, it **persists a recalibrated working target** (small steps, safe bounds, with its

@@ -43,9 +43,38 @@ Captured so good ideas are not lost. Each needs its own scoping before it starts
 
 ### Analysis
 - **Deterministic stats / commands:** `/today`, `/week` computing exact totals
-  via SQL aggregation; charts.
+  via SQL aggregation; charts. *(Partly done: `get_intake_summary` now gives the
+  weekly agent SQL-computed per-day totals + a week-over-week comparison.)*
 - **Deterministic / statistical correlation** between tags and symptoms (beyond
   the LLM eyeballing a window), once there is enough data density to be honest.
+- **Longitudinal / monthly trend analysis (build once there's 2–3 months of real
+  data — ~Sep 2026 at current pace; do NOT build against empty history).** The
+  weekly review stays focused on the last ~4 weeks; long-range comparison is a
+  *separate feature* on a monthly/quarterly cadence, not crammed into every weekly
+  run (the month barely moves week to week, and it would bloat cost + repeat itself).
+  Design constraints that make month-vs-month *relevant* rather than noise:
+  - **Deterministic, persisted rollups.** A `monthly_stats` table (avg
+    kcal/protein/fibre, weight, symptom counts, top foods per month), computed in
+    SQL. Never have the LLM eyeball a year of diary — that's garbage arithmetic and
+    blown context. Month-over-month is then real SQL, not the model half-remembering.
+  - **Like-for-like, or it lies.** Comparing an injured/low-activity month to a
+    healthy one screams "you're eating way less!" — true but meaningless. Tag each
+    period with context (injury/illness, activity level, eventually season); this is
+    where the deferred *active-conditions* state (below) finally earns its place.
+  - **Completeness-gated.** Only compare months that are adequately logged; surface
+    the completeness rate rather than comparing a sparse month to a full one.
+  - **Sustained-change, not blips.** Call something a trend only when it persists
+    across several periods and clears noise — narrate the confound, don't just diff.
+  - **Endpoint (≈1yr+):** same-month-last-year comparison once seasonality (holidays,
+    summer vs winter) is real. Genuinely future.
+- **Active-conditions state (prerequisite for honest longitudinal comparison, also
+  useful now):** a stored injury/illness flag with set/cleared dates, settable by an
+  agent tool, that (a) lets calibration lower the activity multiplier without
+  re-inferring from meal notes, (b) raises the protein floor during immobility, and
+  (c) auto-reminds to clear it so the multiplier doesn't stay low after recovery.
+  Same guardrails as calibrated targets: clamps in code, mandatory rationale, missing
+  data treated as "not recorded" never a measured zero. Deferred until the
+  calibration loop has run a few real weeks in production.
 
 ### Active guidance & research
 The longer-term direction: move from a *reference* that observes to an *active coach*

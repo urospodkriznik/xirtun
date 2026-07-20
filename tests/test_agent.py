@@ -113,16 +113,21 @@ def test_intake_summary_computes_daily_totals_and_target_comparison(conn, tmp_pa
         return {"occurred_at": occurred_at, "notes": None,
                 "items": [{"name": "x", "calories": kcal, "protein_g": protein, "fiber_g": fiber}]}
 
+    # This week (now = 07-08): two logged days.
     diary.save_meal(conn, "a", meal("2026-07-06T09:00:00", 500, 30, 8))
     diary.save_meal(conn, "b", meal("2026-07-06T21:15:00", 700, 40, 4))   # late meal
     diary.save_meal(conn, "c", meal("2026-07-07T12:00:00", 1200, 50, 10))
+    # Last week: higher intake, for the week-over-week delta.
+    diary.save_meal(conn, "d", meal("2026-06-30T12:00:00", 2400, 100, 20))
 
     ctx = ToolContext(conn=conn, diet_path=tmp_path / "d.md",
                       observations_path=tmp_path / "o.md", now=datetime(2026, 7, 8, 17, 0))
-    out = build_dispatch(ctx)["get_intake_summary"]({"since_days": 7})
+    out = build_dispatch(ctx)["get_intake_summary"]({"weeks": 4})
 
-    assert "2026-07-06: 2 meal(s), ~1200 kcal, 70g protein, 12g fibre" in out
-    assert "~1200 kcal/day" in out                     # avg over the 2 logged days
+    assert "2026-07-06: 2 meal(s), ~1200 kcal, 70g protein, 12g fibre" in out  # per-day
+    assert "This week: ~1200 kcal" in out              # avg per logged day, this week
+    assert "1 wk ago: ~2400 kcal" in out               # week-over-week row
+    assert "-1200 kcal (-50%)" in out                  # this-week-vs-last delta, in code
     assert "calibrated): ~2400 kcal/day" in out
     assert "50% of target" in out                      # 1200/2400, computed in code
     assert "2026-07-06 21:15" in out                   # late-meal listed

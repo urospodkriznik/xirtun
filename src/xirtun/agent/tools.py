@@ -32,9 +32,10 @@ class ToolContext:
 
 TOOLS_DOC = (
     "Tools (call exactly ONE per turn, via `tool` + `args_json`):\n"
-    "- get_intake_summary(since_days:int=7) -> per-day intake table (meals, kcal, protein, "
-    "fibre) computed in SQL, plus averages, the working target comparison, and late-evening "
-    "meals. USE THESE NUMBERS — never sum meal items yourself\n"
+    "- get_intake_summary(weeks:int=4) -> this week's per-day intake table, a "
+    "week-over-week comparison across recent weeks (avg kcal/protein/fibre per logged "
+    "day, with this-week-vs-last-week deltas), the working-target check, and late-evening "
+    "meals — all computed in SQL. USE THESE NUMBERS — never sum meal items yourself\n"
     "- query_diary(since_days:int=28, kind:'all'|'meals'|'symptoms'|'exercises'='all') -> recent diary\n"
     "- read_diet() -> the user's profile (diet.md)\n"
     "- read_observations() -> your own prior notes (observations.md)\n"
@@ -103,48 +104,78 @@ def _query_diary(ctx: ToolContext, args: dict[str, Any]) -> str:
     return "\n\n".join(parts)
 
 
+def _week_label(weeks_ago: int) -> str:
+    if weeks_ago == 0:
+        return "This week"
+    if weeks_ago == 1:
+        return "1 wk ago"
+    return f"{weeks_ago} wks ago"
+
+
 def _intake_summary(ctx: ToolContext, args: dict[str, Any]) -> str:
-    """Deterministic per-day intake numbers + working-target comparison. Everything
-    here is computed in code so the agent's energy/macro claims rest on real
-    arithmetic, not the model summing dozens of items itself."""
-    days = int(args.get("since_days", 7))
-    since = (ctx.now - timedelta(days=days)).isoformat()
+    """Deterministic intake numbers: this week's per-day detail, a week-over-week
+    comparison across the last `weeks` weeks, and the working-target check. Everything
+    is computed in code so the agent's energy/macro claims (and the week-over-week
+    deltas) rest on real arithmetic, not the model summing dozens of items itself."""
+    weeks = int(args.get("weeks", 4))
 
-    rows = diary.daily_totals(ctx.conn, since)
-    if not rows:
-        return f"No meals logged in the last {days} days."
+    since_week = (ctx.now - timedelta(days=7)).isoformat()
+    day_rows = diary.daily_totals(ctx.conn, since_week)
+    if not day_rows and not any(w["days_logged"] for w in diary.weekly_totals(ctx.conn, ctx.now, weeks=weeks)):
+        return f"No meals logged in the last {weeks} weeks."
 
-    lines = [f"Per-day intake, last {days} days (SQL-computed):"]
-    for r in rows:
+    lines = ["This week's per-day intake (SQL-computed):"]
+    if day_rows:
+        for r in day_rows:
+            lines.append(
+                f"- {r['day']}: {r['meals']} meal(s), ~{round(r['calories'])} kcal, "
+                f"{round(r['protein_g'])}g protein, {round(r['fiber_g'])}g fibre"
+            )
         lines.append(
-            f"- {r['day']}: {r['meals']} meal(s), ~{round(r['calories'])} kcal, "
-            f"{round(r['protein_g'])}g protein, {round(r['fiber_g'])}g fibre"
+            f"Days logged this week: {len(day_rows)} of 7. (Judge whether sparse days "
+            "mean incomplete logging by comparing meal counts to the user's usual "
+            "pattern, rather than treating a thin day as a real fast.)"
         )
-    n = len(rows)
-    avg_kcal = sum(r["calories"] for r in rows) / n
-    avg_protein = sum(r["protein_g"] for r in rows) / n
-    avg_fiber = sum(r["fiber_g"] for r in rows) / n
-    lines.append(
-        f"Averages over the {n} day(s) WITH logged meals: ~{round(avg_kcal)} kcal/day, "
-        f"{round(avg_protein)}g protein/day, {round(avg_fiber)}g fibre/day. "
-        f"({days - n} day(s) in the window have nothing logged — judge whether sparse "
-        "days mean incomplete logging by comparing meal counts to the user's usual "
-        "pattern, and say so rather than treating a thin day as a real fast.)"
-    )
+    else:
+        lines.append("- (nothing logged this week)")
+
+    # Week-over-week: averages per LOGGED day, most recent first, with the delta from
+    # this week to last week spelled out so trend — not a single week — drives the read.
+    wk = diary.weekly_totals(ctx.conn, ctx.now, weeks=weeks)
+    lines.append("\nWeek-over-week (avg per logged day, most recent first):")
+    for w in wk:
+        if w["days_logged"]:
+            lines.append(
+                f"- {_week_label(w['weeks_ago'])}: ~{round(w['avg_calories'])} kcal, "
+                f"{round(w['avg_protein_g'])}g protein, {round(w['avg_fiber_g'])}g fibre "
+                f"({w['days_logged']} day(s) logged)"
+            )
+        else:
+            lines.append(f"- {_week_label(w['weeks_ago'])}: nothing logged")
+
+    this_wk, last_wk = wk[0], (wk[1] if len(wk) > 1 else None)
+    if this_wk["days_logged"] and last_wk and last_wk["days_logged"]:
+        d_cal = this_wk["avg_calories"] - last_wk["avg_calories"]
+        pct = round(d_cal / last_wk["avg_calories"] * 100) if last_wk["avg_calories"] else 0
+        lines.append(
+            f"This week vs last week: {d_cal:+.0f} kcal ({pct:+d}%), "
+            f"{this_wk['avg_protein_g'] - last_wk['avg_protein_g']:+.0f}g protein, "
+            f"{this_wk['avg_fiber_g'] - last_wk['avg_fiber_g']:+.0f}g fibre."
+        )
 
     target = targets.working_target(ctx.conn)
-    if target is not None:
+    if target is not None and this_wk["days_logged"]:
         lines.append(
-            f"Working target ({target['source']}): ~{target['calories']} kcal/day, "
-            f"{target['protein_min_g']}–{target['protein_max_g']}g protein/day → logged "
-            f"intake averages {round(avg_kcal / target['calories'] * 100)}% of target "
-            f"calories. Reconcile this against the weight trend before calling it a "
+            f"\nWorking target ({target['source']}): ~{target['calories']} kcal/day, "
+            f"{target['protein_min_g']}–{target['protein_max_g']}g protein/day → this "
+            f"week averages {round(this_wk['avg_calories'] / target['calories'] * 100)}% "
+            "of target calories. Reconcile against the weight trend before calling it a "
             "deficit or surplus."
         )
 
-    late = diary.late_meal_days(ctx.conn, since)
+    late = diary.late_meal_days(ctx.conn, since_week)
     lines.append(
-        "Meals eaten at/after 20:00 (reflux window): "
+        "\nMeals eaten at/after 20:00 this week (reflux window): "
         + (", ".join(late) if late else "none")
     )
     return "\n".join(lines)
