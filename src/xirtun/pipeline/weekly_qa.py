@@ -1,4 +1,4 @@
-"""Session tracking for the weekly review's calibrating questions.
+"""The weekly review's calibrating-questions Q&A, in its OWN `weekly_qa` table.
 
 Two modes, matching how the review was triggered:
 - "interactive" (manual /weekly): the report is HELD until the questions are
@@ -6,9 +6,10 @@ Two modes, matching how the review was triggered:
 - "capture" (scheduled run): the report already went out; replies just get filed
   as notes for next week — this week's analysis isn't redone.
 
-Built on the generic `pending` session table (kind="weekly_qa", the JSON blob
-below packed into Session.text) rather than a new table, matching how other
-multi-turn flows (meal/symptom clarification) already work.
+A dedicated table (not the shared `pending` slot) on purpose: this state is
+long-lived (TIMEOUT below) and must survive unrelated commands — /undo, a meal
+clarification, a bare-command prompt — that reuse the single per-chat `pending`
+row. Sharing that row let any such command silently clobber a pending Q&A.
 
 Waits for an explicit 'done'/'skip' rather than a short auto-timeout: a held report
 must never be silently dropped just because the reply took a while. See TIMEOUT.
@@ -19,15 +20,12 @@ from __future__ import annotations
 import json
 import sqlite3
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
-from xirtun.pipeline import sessions
-
-KIND = "weekly_qa"
 DONE_WORDS = {"done", "skip", "/done", "/skip"}
 
-# Far longer than the default session TIMEOUT (30 min) — a held report or pending
-# Q&A must survive the user being away for a day or two, not just a bathroom break.
+# Long-lived: a held report or pending Q&A must survive the user being away for a
+# day or two. Still bounded so an abandoned Q&A doesn't linger forever.
 TIMEOUT = timedelta(days=3)
 
 
@@ -39,53 +37,69 @@ class WeeklyQA:
     report: str = ""                       # held report text; "" for "capture" mode
 
 
-def _dump(qa: WeeklyQA) -> str:
-    return json.dumps(
-        {"mode": qa.mode, "questions": qa.questions, "answers": qa.answers, "report": qa.report}
-    )
-
-
-def _load(text: str) -> WeeklyQA:
-    data = json.loads(text)
-    return WeeklyQA(
-        mode=data["mode"],
-        questions=data.get("questions", []),
-        answers=data.get("answers", []),
-        report=data.get("report", ""),
-    )
+def _now(now: datetime | None) -> datetime:
+    return now or datetime.now(timezone.utc)
 
 
 def start(
     conn: sqlite3.Connection, chat_id: str, *, mode: str, questions: list[str], report: str = "",
     now: datetime | None = None,
 ) -> None:
-    qa = WeeklyQA(mode=mode, questions=questions, report=report)
-    sessions.upsert(conn, chat_id, KIND, _dump(qa), now=now)
+    conn.execute(
+        "INSERT INTO weekly_qa (chat_id, mode, questions, answers, report, updated_at) "
+        "VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(chat_id) DO UPDATE SET "
+        "mode = excluded.mode, questions = excluded.questions, answers = excluded.answers, "
+        "report = excluded.report, updated_at = excluded.updated_at",
+        (chat_id, mode, json.dumps(questions), json.dumps([]), report, _now(now).isoformat()),
+    )
+    conn.commit()
 
 
 def get(conn: sqlite3.Connection, chat_id: str, *, now: datetime | None = None) -> WeeklyQA | None:
-    session = sessions.get_active(conn, chat_id, now=now, timeout=TIMEOUT)
-    if session is None or session.kind != KIND:
+    row = conn.execute(
+        "SELECT mode, questions, answers, report, updated_at FROM weekly_qa WHERE chat_id = ?",
+        (chat_id,),
+    ).fetchone()
+    if row is None:
         return None
-    return _load(session.text)
+    if datetime.fromisoformat(row["updated_at"]) < _now(now) - TIMEOUT:
+        clear(conn, chat_id)
+        return None
+    return WeeklyQA(
+        mode=row["mode"],
+        questions=json.loads(row["questions"]),
+        answers=json.loads(row["answers"]),
+        report=row["report"],
+    )
 
 
-def persist(conn: sqlite3.Connection, chat_id: str, qa: WeeklyQA, *, now: datetime | None = None) -> None:
-    """(Re-)write the session row from the given WeeklyQA — used to restore it if a
-    log processed mid-flow opened its own competing session (the `pending` table
-    holds one row per chat, so the two would otherwise clobber each other)."""
-    sessions.upsert(conn, chat_id, KIND, _dump(qa), now=now)
+def _save(conn: sqlite3.Connection, chat_id: str, qa: WeeklyQA, now: datetime | None) -> None:
+    conn.execute(
+        "UPDATE weekly_qa SET mode = ?, questions = ?, answers = ?, report = ?, updated_at = ? "
+        "WHERE chat_id = ?",
+        (qa.mode, json.dumps(qa.questions), json.dumps(qa.answers), qa.report,
+         _now(now).isoformat(), chat_id),
+    )
+    conn.commit()
+
+
+def touch(conn: sqlite3.Connection, chat_id: str, qa: WeeklyQA, *, now: datetime | None = None) -> None:
+    """Refresh updated_at (resets the TIMEOUT) without changing the Q&A — e.g. after a
+    log is handled mid-flow, to keep the still-open questions alive while the user is
+    actively interacting."""
+    _save(conn, chat_id, qa, now)
 
 
 def record_answer(
     conn: sqlite3.Connection, chat_id: str, qa: WeeklyQA, answer: str, *, now: datetime | None = None,
 ) -> None:
     qa.answers.append(answer)
-    sessions.upsert(conn, chat_id, KIND, _dump(qa), now=now)
+    _save(conn, chat_id, qa, now)
 
 
 def clear(conn: sqlite3.Connection, chat_id: str) -> None:
-    sessions.clear(conn, chat_id)
+    conn.execute("DELETE FROM weekly_qa WHERE chat_id = ?", (chat_id,))
+    conn.commit()
 
 
 def is_done_word(text: str) -> bool:

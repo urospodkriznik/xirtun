@@ -84,6 +84,18 @@ CREATE TABLE IF NOT EXISTS pending (
     updated_at TEXT NOT NULL
 );
 
+-- The weekly review's follow-up Q&A. Its OWN table (not `pending`) on purpose: it's
+-- long-lived (days) and must survive unrelated commands — /undo, a meal clarification,
+-- etc. — that reuse the single per-chat `pending` slot and would otherwise clobber it.
+CREATE TABLE IF NOT EXISTS weekly_qa (
+    chat_id    TEXT PRIMARY KEY,
+    mode       TEXT NOT NULL,          -- "interactive" | "capture"
+    questions  TEXT NOT NULL,          -- JSON array
+    answers    TEXT NOT NULL,          -- JSON array
+    report     TEXT NOT NULL DEFAULT '',
+    updated_at TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS runs (
     id          INTEGER PRIMARY KEY,
     kind        TEXT NOT NULL,
@@ -143,6 +155,10 @@ def _migrate(conn: sqlite3.Connection) -> None:
     add_missing("known_foods", ("package_g", "fiber_g", "sugar_g"))
     add_missing("meal_items", ("sugar_g", "fiber_g"))
     add_missing("custom_meals", ("sugar_g", "fiber_g"))
+
+    # Weekly Q&A moved out of `pending` into its own table — drop any stale row a
+    # pre-migration version may have left in `pending` so it can't be misrouted.
+    conn.execute("DELETE FROM pending WHERE kind = 'weekly_qa'")
 
 
 # --- key/value helpers (e.g. the Telegram update offset) ---

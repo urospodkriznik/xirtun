@@ -10,6 +10,7 @@ from xirtun.llm.fake import FakeLLM
 from xirtun.messaging.fake import FakeMessenger
 from xirtun.pipeline import sessions, weekly_qa
 from xirtun.pipeline.intake import dispatch, handle_message
+from xirtun.storage import diary
 
 CHAT_ID = "c1"
 NOW = datetime(2026, 1, 8, 9, 0, tzinfo=timezone.utc)
@@ -100,6 +101,46 @@ def test_answer_discussing_symptoms_is_not_logged_as_a_symptom(conn, tmp_path):
     handle_message("done", chat_id=CHAT_ID, llm=FakeLLM(), conn=conn, messenger=messenger,
                    observations_path=obs, now=NOW)
     assert "smoothies would help" in obs.read_text()             # captured as an answer
+
+
+def test_qa_survives_an_unrelated_undo_command(conn, tmp_path):
+    """The whole point of the dedicated table: a pending Q&A must survive an unrelated
+    command that uses the shared `pending` slot. /undo (open undo_confirm → 'yes') used
+    to clobber the Q&A, so the later answer fell through and got logged as a symptom."""
+    obs = tmp_path / "observations.md"
+    diet = tmp_path / "diet.md"
+    diet.write_text("# Profile")
+    diary.save_meal(conn, "banana",
+                    {"occurred_at": None, "notes": None, "items": [{"name": "banana", "calories": 90}]})
+    weekly_qa.start(conn, CHAT_ID, mode="capture", questions=["How's your appetite?"], now=NOW)
+
+    handle_message("/undo", chat_id=CHAT_ID, llm=FakeLLM(), conn=conn, messenger=FakeMessenger(),
+                   diet_path=diet, observations_path=obs, now=NOW)
+    handle_message("yes", chat_id=CHAT_ID, llm=FakeLLM(), conn=conn, messenger=FakeMessenger(),
+                   diet_path=diet, observations_path=obs, now=NOW)
+
+    assert conn.execute("SELECT COUNT(*) AS n FROM meals").fetchone()["n"] == 0  # undo worked
+    assert weekly_qa.get(conn, CHAT_ID, now=NOW) is not None                     # Q&A survived
+
+    handle_message("no appetite, feeling bloated", chat_id=CHAT_ID,
+                   llm=FakeLLM([LLMResponse(data={"kind": "answer"})]),
+                   conn=conn, messenger=FakeMessenger(), observations_path=obs, now=NOW)
+    assert conn.execute("SELECT COUNT(*) AS n FROM symptoms").fetchone()["n"] == 0  # not a symptom
+
+    handle_message("done", chat_id=CHAT_ID, llm=FakeLLM(), conn=conn, messenger=FakeMessenger(),
+                   observations_path=obs, now=NOW)
+    assert "feeling bloated" in obs.read_text()                                  # captured as answer
+
+
+def test_real_command_runs_while_qa_pending(conn, tmp_path):
+    """A genuine command (/today) mid-Q&A must run, not be swallowed as an answer —
+    and the Q&A stays open afterward."""
+    _start_capture(conn)
+    messenger = FakeMessenger()
+    handle_message("/today", chat_id=CHAT_ID, llm=FakeLLM(), conn=conn, messenger=messenger, now=NOW)
+
+    assert "No meals logged today" in messenger.sent[-1]         # /today ran
+    assert weekly_qa.get(conn, CHAT_ID, now=NOW) is not None     # Q&A untouched
 
 
 def test_weekly_command_declines_while_qa_pending(conn, tmp_path):

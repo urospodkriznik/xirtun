@@ -309,11 +309,7 @@ def handle_message(
         return
 
     # 2) Mid-session: continue whatever we were collecting (meal or symptom).
-    # weekly_qa sessions get a much longer timeout (a held report must survive the
-    # user being away for a day or two) — peek the kind first so the right one applies.
-    pending_kind = sessions.peek_kind(conn, chat_id)
-    timeout = weekly_qa.TIMEOUT if pending_kind == weekly_qa.KIND else sessions.TIMEOUT
-    session = sessions.get_active(conn, chat_id, now=now, timeout=timeout)
+    session = sessions.get_active(conn, chat_id, now=now)
     if session is not None:
         if session.kind == "food_confirm":
             _resolve_food_confirm(session, text, chat_id=chat_id, conn=conn, messenger=messenger)
@@ -333,14 +329,6 @@ def handle_message(
                 diet_path=diet_path, now=now,
             )
             return
-        if session.kind == weekly_qa.KIND:
-            qa = weekly_qa.get(conn, chat_id, now=now)
-            if qa is not None:
-                _resolve_weekly_qa(
-                    qa, text, chat_id=chat_id, llm=llm, conn=conn, messenger=messenger,
-                    diet_path=diet_path, observations_path=observations_path, now=now,
-                )
-            return
         if session.kind in {"meal", "symptom", "exercise"} and text.strip().lower() in CANCEL_WORDS:
             sessions.clear(conn, chat_id)
             messenger.send("Cancelled — nothing logged.")
@@ -352,6 +340,18 @@ def handle_message(
             _process_exercise(combined, chat_id=chat_id, llm=llm, conn=conn, messenger=messenger, now=now)
         else:
             _process_meal(combined, chat_id=chat_id, llm=llm, conn=conn, messenger=messenger, now=now)
+        return
+
+    # 2b) A weekly-review Q&A is the LOWEST-priority, longest-lived context (its own
+    # table, so it survived any transient session above). It consumes free-text answers
+    # and 'done'/'skip', but lets real/unrecognized slash commands pass through — a
+    # /today mid-Q&A should run, not be swallowed as an answer.
+    qa = weekly_qa.get(conn, chat_id, now=now)
+    if qa is not None and (weekly_qa.is_done_word(text) or not text.startswith("/")):
+        _resolve_weekly_qa(
+            qa, text, chat_id=chat_id, llm=llm, conn=conn, messenger=messenger,
+            diet_path=diet_path, observations_path=observations_path, now=now,
+        )
         return
 
     # A leftover slash message here matched no command above and isn't a session reply —
@@ -551,16 +551,12 @@ def _resolve_weekly_qa(
     is_new_log = classify_qa_reply(llm, qa.questions, text) == "new_log"
     intent = classify(llm, text) if is_new_log else "other"
     if is_new_log and intent in _LOG_INTENTS:
+        # Log the unrelated entry, then re-surface the still-open questions. The Q&A
+        # lives in its own table, so the log's own session (if it opened a clarification)
+        # can't clobber it — we just refresh its timeout to keep it alive.
         _route_intent(intent, text, chat_id=chat_id, llm=llm, conn=conn, messenger=messenger,
                        diet_path=diet_path, now=now)
-        # The processor above unconditionally clears or replaces the chat's ONE pending
-        # slot — if it opened its own clarification, restore the weekly_qa session
-        # (the held report/answers-so-far matter more than one nested follow-up) and
-        # say so plainly; either way, remind them the questions are still open.
-        after = sessions.get_active(conn, chat_id, now=now)
-        if after is not None and after.kind != weekly_qa.KIND:
-            messenger.send("That needs a bit more detail — try logging it again once we finish these questions.")
-        weekly_qa.persist(conn, chat_id, qa, now=now)
+        weekly_qa.touch(conn, chat_id, qa, now=now)
         messenger.send(weekly_qa.format_reminder(qa.questions))
         return
 
@@ -1164,7 +1160,7 @@ def dispatch(
         messenger.send("All data cleared. Send me anything to start fresh.")
         return
     if command == "/weekly" and weekly_cb is not None:
-        if sessions.peek_kind(conn, chat_id) == weekly_qa.KIND:
+        if weekly_qa.get(conn, chat_id, now=now) is not None:
             messenger.send(
                 "You've still got questions open from the last review — reply to "
                 "those (or send 'skip') before running another one."
