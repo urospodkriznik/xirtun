@@ -20,6 +20,13 @@ class Intent(BaseModel):
     intent: Literal["meal", "symptom", "exercise", "note", "shopping", "food", "other"]
 
 
+class QAReplyRouting(BaseModel):
+    """Whether a reply, sent while the weekly review's follow-up questions are pending,
+    is answering those questions or is an unrelated new diary entry to log."""
+
+    kind: Literal["answer", "new_log"]
+
+
 class Item(BaseModel):
     name: str
     quantity_g: float | None = None

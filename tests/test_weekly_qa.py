@@ -28,7 +28,9 @@ def test_capture_mode_records_answer_and_finalizes_on_done(conn, tmp_path):
     _start_capture(conn)
     messenger = FakeMessenger()
 
-    handle_message("yes, quite hungry actually", chat_id=CHAT_ID, llm=FakeLLM([LLMResponse(data={"intent": "other"})]),
+    # Context-aware router says this is an answer, not a new log.
+    handle_message("yes, quite hungry actually", chat_id=CHAT_ID,
+                   llm=FakeLLM([LLMResponse(data={"kind": "answer"})]),
                    conn=conn, messenger=messenger, observations_path=obs, now=NOW)
     assert weekly_qa.get(conn, CHAT_ID, now=NOW) is not None   # still open
 
@@ -61,7 +63,8 @@ def test_meal_logged_mid_qa_is_processed_and_qa_resumes(conn, tmp_path):
     messenger = FakeMessenger()
 
     llm = FakeLLM([
-        LLMResponse(data={"intent": "meal"}),
+        LLMResponse(data={"kind": "new_log"}),       # context-aware router: unrelated new entry
+        LLMResponse(data={"intent": "meal"}),        # then the plain classifier routes it
         LLMResponse(data={"needs_clarification": False, "meals": [
             {"occurred_at": None, "notes": None, "items": [{"name": "banana", "calories": 90}]},
         ]}),
@@ -74,6 +77,29 @@ def test_meal_logged_mid_qa_is_processed_and_qa_resumes(conn, tmp_path):
     qa = weekly_qa.get(conn, CHAT_ID, now=NOW)
     assert qa is not None and qa.report == "Your week in review."     # not lost
     assert conn.execute("SELECT COUNT(*) AS n FROM meals").fetchone()["n"] == 1
+
+
+def test_answer_discussing_symptoms_is_not_logged_as_a_symptom(conn, tmp_path):
+    """Regression (prod bug 2026-07-20): the review asked about bloating/appetite; the
+    user's answer naturally discussed bloating, so the plain classifier logged it as a
+    symptom instead of recording it as an answer. The context-aware router must keep it
+    an answer — nothing should land in the symptoms table."""
+    obs = tmp_path / "observations.md"
+    weekly_qa.start(conn, CHAT_ID, mode="capture",
+                    questions=["How are your meal volumes / appetite?"], now=NOW)
+    messenger = FakeMessenger()
+
+    reply = ("i kind of don't feel hungry, no appetite, but my belly still feels bloated — "
+             "maybe smoothies would help, and not working out is a big factor")
+    handle_message(reply, chat_id=CHAT_ID, llm=FakeLLM([LLMResponse(data={"kind": "answer"})]),
+                   conn=conn, messenger=messenger, observations_path=obs, now=NOW)
+
+    assert conn.execute("SELECT COUNT(*) AS n FROM symptoms").fetchone()["n"] == 0
+    assert weekly_qa.get(conn, CHAT_ID, now=NOW) is not None      # still collecting answers
+
+    handle_message("done", chat_id=CHAT_ID, llm=FakeLLM(), conn=conn, messenger=messenger,
+                   observations_path=obs, now=NOW)
+    assert "smoothies would help" in obs.read_text()             # captured as an answer
 
 
 def test_weekly_command_declines_while_qa_pending(conn, tmp_path):

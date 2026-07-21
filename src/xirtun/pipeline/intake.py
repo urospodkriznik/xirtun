@@ -24,7 +24,7 @@ from xirtun.messaging.base import Messenger
 from xirtun.memory import diet as memory
 from xirtun.memory import observations
 from xirtun.pipeline import sessions, weekly_qa
-from xirtun.pipeline.classify import classify
+from xirtun.pipeline.classify import classify, classify_qa_reply
 from xirtun.pipeline.exercise import structure_exercise
 from xirtun.pipeline.food import parse_food
 from xirtun.pipeline.onboarding import onboarding_step
@@ -535,17 +535,22 @@ def _resolve_weekly_qa(
     observations_path: Path | None,
     now: datetime | None,
 ) -> None:
-    """Handle a reply while a weekly Q&A is pending: 'done'/'skip' finalizes it; a
-    message that classifies as an actual log (meal/symptom/exercise/food/shopping) is
-    processed normally and the open question(s) are re-shown afterward (resume-on-
-    interrupt); anything else is treated as an answer and accumulated."""
+    """Handle a reply while a weekly Q&A is pending: 'done'/'skip' finalizes it; a reply
+    that is a brand-new, UNRELATED diary entry is logged and the open question(s) re-shown
+    (resume-on-interrupt); everything else is treated as an answer and accumulated.
+
+    The answer-vs-log decision is context-aware (`classify_qa_reply` sees the pending
+    questions): an answer that discusses symptoms/food because the QUESTION was about
+    them must not be mistaken for a new symptom/meal log — the plain classifier can't
+    tell those apart, since the text is identical."""
     if weekly_qa.is_done_word(text):
         _finalize_weekly_qa(qa, chat_id=chat_id, conn=conn, messenger=messenger,
                              observations_path=observations_path, now=now)
         return
 
-    intent = classify(llm, text)
-    if intent in _LOG_INTENTS:
+    is_new_log = classify_qa_reply(llm, qa.questions, text) == "new_log"
+    intent = classify(llm, text) if is_new_log else "other"
+    if is_new_log and intent in _LOG_INTENTS:
         _route_intent(intent, text, chat_id=chat_id, llm=llm, conn=conn, messenger=messenger,
                        diet_path=diet_path, now=now)
         # The processor above unconditionally clears or replaces the chat's ONE pending
