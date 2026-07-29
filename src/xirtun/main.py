@@ -55,7 +55,7 @@ COMMANDS = [
     ("savemeal", "Save a recurring meal"),
     ("meallist", "List your saved meals"),
     ("delmeal", "Remove a saved meal"),
-    ("target", "Your daily calorie & protein target"),
+    ("target", "Your daily targets and what's left today"),
     ("addweight", "Update your weight"),
     ("setactivity", "Update your activity level"),
     ("export", "Download your diary as a JSON backup"),

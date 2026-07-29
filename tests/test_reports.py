@@ -2,10 +2,14 @@
 
 from datetime import datetime, timezone
 
-from xirtun import reports
+from xirtun import reports, targets
 from xirtun.storage import diary
 
 NOW = datetime(2026, 6, 23, 20, 0, tzinfo=timezone.utc)
+FULL_METRICS = {
+    "sex": "male", "birth_year": 1994, "height_cm": 180,
+    "weight_kg": 80, "activity": "moderate",
+}
 
 
 def _meal(items, occurred_at):
@@ -23,6 +27,57 @@ def test_today_report_with_meals(conn):
 
 def test_today_report_empty(conn):
     assert "No meals" in reports.today_report(conn, NOW)
+
+
+def test_remaining_today_report_subtracts_what_was_eaten(conn):
+    targets.write_metrics(conn, dict(FULL_METRICS))
+    targets.set_calibrated(
+        conn, calories=2000, protein_min_g=100, protein_max_g=120,
+        rationale="steady weight, feels good",
+    )
+    diary.save_meal(conn, "lunch", _meal(
+        [{"name": "chicken and rice", "calories": 800, "protein_g": 60,
+          "fat_g": 20, "carbs_g": 90, "sugar_g": 10, "fiber_g": 5}],
+        NOW.replace(hour=12).isoformat(),
+    ))
+
+    out = reports.remaining_today_report(conn, NOW)
+    assert "calibrated" in out
+    assert "1200 kcal left" in out                  # 2000 - 800
+    assert "40–60g left" in out                     # protein 100–120 minus 60
+    g = targets.macro_guidelines(2000)
+    assert f"{g['sugar_max_g'] - 10}g before the cap" in out
+    assert f"{g['fiber_min_g'] - 5}g to go" in out
+    assert "guidelines" in out                      # fat/carbs/sugar/fibre labelled
+
+
+def test_remaining_today_report_flags_going_over(conn):
+    targets.write_metrics(conn, dict(FULL_METRICS))
+    targets.set_calibrated(
+        conn, calories=2000, protein_min_g=100, protein_max_g=120, rationale="baseline",
+    )
+    diary.save_meal(conn, "feast", _meal(
+        [{"name": "cake", "calories": 2500, "protein_g": 130,
+          "fat_g": 0, "carbs_g": 0, "sugar_g": 300, "fiber_g": 40}],
+        NOW.replace(hour=12).isoformat(),
+    ))
+
+    out = reports.remaining_today_report(conn, NOW)
+    assert "500 kcal over" in out                   # calories past target
+    assert "10g over" in out                        # protein past the band top
+    assert "over the cap" in out                    # sugar past the ceiling
+    assert "target met" in out                      # fibre floor reached
+
+
+def test_remaining_today_report_without_meals_shows_the_whole_day(conn):
+    targets.write_metrics(conn, dict(FULL_METRICS))
+    out = reports.remaining_today_report(conn, NOW)
+    assert "nothing logged yet" in out
+    assert "formula" in out                         # no calibration → formula target
+
+
+def test_remaining_today_report_without_metrics(conn):
+    assert "don't have" in reports.remaining_today_report(conn, NOW)
 
 
 def test_week_report(conn):

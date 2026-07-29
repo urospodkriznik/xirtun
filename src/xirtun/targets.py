@@ -38,6 +38,16 @@ _PROTEIN_RANGE = {
     "active":     (1.6, 1.8),
     "very_active":(1.8, 2.0),
 }
+# Split of the calorie target across the remaining macros. Unlike calories and
+# protein these are NOT personalised or calibrated — they are population-level
+# guidelines (AMDR for fat/carbs, WHO free-sugar cap, US Dietary Guidelines for
+# fibre) applied to whatever calorie target is in force. They exist so "how much
+# is left today" has an answer for every nutrient the diary tracks; anything
+# shown from them must be labelled as a guideline, not as the user's target.
+_FAT_PCT = (0.25, 0.35)       # AMDR is 20–35% of energy; the top half is the useful band
+_CARBS_PCT = (0.45, 0.55)     # AMDR is 45–65% of energy
+_SUGAR_PCT_CAP = 0.10         # WHO: free sugars below 10% of energy
+_FIBER_G_PER_1000_KCAL = 14   # US Dietary Guidelines
 
 
 def read_metrics(conn: sqlite3.Connection) -> dict[str, Any]:
@@ -228,6 +238,23 @@ def format_calibrated(conn: sqlite3.Connection) -> str:
 def format_all_targets(conn: sqlite3.Connection) -> str:
     """Formula estimate + calibrated working target, for /target and the agent."""
     return f"{format_targets(read_metrics(conn))}\n{format_calibrated(conn)}"
+
+
+def macro_guidelines(calories: int) -> dict[str, int]:
+    """Guideline fat/carb/sugar/fibre amounts implied by a calorie target.
+
+    Derived, not calibrated — see the constants above. Fat and carbs come back as
+    ranges, sugar as a ceiling, fibre as a floor, because that is how each one is
+    actually recommended.
+    """
+    return {
+        "fat_min_g": round(calories * _FAT_PCT[0] / 9),      # fat: 9 kcal/g
+        "fat_max_g": round(calories * _FAT_PCT[1] / 9),
+        "carbs_min_g": round(calories * _CARBS_PCT[0] / 4),  # carbs: 4 kcal/g
+        "carbs_max_g": round(calories * _CARBS_PCT[1] / 4),
+        "sugar_max_g": round(calories * _SUGAR_PCT_CAP / 4),
+        "fiber_min_g": round(calories * _FIBER_G_PER_1000_KCAL / 1000),
+    }
 
 
 def working_target(conn: sqlite3.Connection) -> dict[str, Any] | None:

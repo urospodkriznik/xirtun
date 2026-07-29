@@ -7,6 +7,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+from xirtun import targets
 from xirtun.memory import diet as memory_diet
 from xirtun.storage import diary
 
@@ -39,6 +40,80 @@ def today_report(conn: sqlite3.Connection, now: datetime) -> str:
         names = ", ".join(item["name"] for item in meal["items"])
         lines.append(f"- {names}")
     return "\n".join(lines)
+
+
+def _amount(value: float, unit: str) -> str:
+    """'120g' / '1200 kcal' — grams hug the number, kcal doesn't."""
+    return f"{round(value)}g" if unit == "g" else f"{round(value)} {unit}"
+
+
+def _range_line(label: str, eaten: float, lo: float, hi: float, unit: str = "g") -> str:
+    """Eaten vs a target band, e.g. 'Protein: 60g of 112–128g → 52–68g left'."""
+    band = f"{round(lo)}–{_amount(hi, unit)}"
+    if eaten > hi:
+        return f"- {label}: {_amount(eaten, unit)} of {band} → {_amount(eaten - hi, unit)} over"
+    left_lo = max(lo - eaten, 0)
+    return (
+        f"- {label}: {_amount(eaten, unit)} of {band} "
+        f"→ {round(left_lo)}–{_amount(hi - eaten, unit)} left"
+    )
+
+
+def _point_line(label: str, eaten: float, target: float, unit: str) -> str:
+    """Eaten vs a single number, e.g. 'Calories: 1400 of ~2500 kcal → 1100 kcal left'."""
+    remaining = target - eaten
+    verdict = f"{_amount(remaining, unit)} left" if remaining >= 0 else f"{_amount(-remaining, unit)} over"
+    return f"- {label}: {round(eaten)} of ~{_amount(target, unit)} → {verdict}"
+
+
+def _cap_line(label: str, eaten: float, cap: float) -> str:
+    """Eaten vs a ceiling (sugar) — the goal is to stay under it, not to reach it."""
+    if eaten > cap:
+        return f"- {label}: {_amount(eaten, 'g')} of ≤{_amount(cap, 'g')} → {_amount(eaten - cap, 'g')} over the cap"
+    return f"- {label}: {_amount(eaten, 'g')} of ≤{_amount(cap, 'g')} → {_amount(cap - eaten, 'g')} before the cap"
+
+
+def _floor_line(label: str, eaten: float, floor: float) -> str:
+    """Eaten vs a minimum (fibre) — the goal is to reach it, with no upper bound."""
+    if eaten >= floor:
+        return f"- {label}: {_amount(eaten, 'g')} of ≥{_amount(floor, 'g')} → target met"
+    return f"- {label}: {_amount(eaten, 'g')} of ≥{_amount(floor, 'g')} → {_amount(floor - eaten, 'g')} to go"
+
+
+def remaining_today_report(conn: sqlite3.Connection, now: datetime) -> str:
+    """What's still left of today's target, nutrient by nutrient.
+
+    Calories and protein come from the working target (calibrated if the weekly
+    review has set one, formula otherwise); fat, carbs, sugar and fibre come from
+    the guideline split of that calorie target, and are labelled as such — they are
+    not personalised the way calories and protein are.
+    """
+    target = targets.working_target(conn)
+    if target is None:
+        return (
+            "I can't work out what's left today — I don't have your full body metrics "
+            "and no target has been calibrated yet."
+        )
+
+    start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    meals = diary.meals_since(conn, start.isoformat())
+    t = _totals(meals)
+    g = targets.macro_guidelines(target["calories"])
+
+    header = f"Still to eat today (vs the {target['source']} target)"
+    if not meals:
+        header += " — nothing logged yet, so this is the whole day"
+    return "\n".join([
+        header + ":",
+        _point_line("Calories", t["calories"], target["calories"], "kcal"),
+        _range_line("Protein", t["protein_g"], target["protein_min_g"], target["protein_max_g"]),
+        _range_line("Fat", t["fat_g"], g["fat_min_g"], g["fat_max_g"]),
+        _range_line("Carbs", t["carbs_g"], g["carbs_min_g"], g["carbs_max_g"]),
+        _cap_line("Sugar", t["sugar_g"], g["sugar_max_g"]),
+        _floor_line("Fibre", t["fiber_g"], g["fiber_min_g"]),
+        "(Fat, carbs, sugar and fibre are general guidelines derived from your "
+        "calorie target — only calories and protein are calibrated for you.)",
+    ])
 
 
 def week_report(conn: sqlite3.Connection, now: datetime) -> str:
