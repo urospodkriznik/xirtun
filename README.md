@@ -64,10 +64,10 @@ your data in plain files you own, and talks to no one but you and the model prov
   but that formula is only the *prior*: the weekly review **calibrates a working
   target** from real evidence (weight trend, satiety feedback, injuries/activity
   changes) and persists it, clamped to safe physiological bounds. `/target` shows
-  both numbers, the rationale for the current calibration, and **what's still left
-  to eat today** for every nutrient — calories and protein against your working
-  target, fat/carbs/sugar/fibre against guideline amounts derived from it.
-- **`/today`** and **`/week`** summaries with real totals and per-day averages.
+  both numbers and the rationale for the current calibration.
+- **`/today`** ends with **what's still left to eat** for every nutrient — calories
+  and protein against your working target, fat/carbs/sugar/fibre against guideline
+  amounts derived from it — and **`/week`** gives real totals and per-day averages.
 
 **Proactive help**
 - **Weekly autonomous review** — a tool-using agent reviews your recent diary, your
@@ -117,7 +117,7 @@ your data in plain files you own, and talks to no one but you and the model prov
 | `/addsymptom <text>` | Log how you feel |
 | `/addnote <text>` | Save a note or goal for your weekly review |
 | `/undo` | Remove your last logged entry (asks to confirm, shows what it'll delete) |
-| `/today` | Today's meals and totals |
+| `/today` | Today's meals and totals, plus what's still left to eat per nutrient |
 | `/week` | The past 7 days, with per-day averages |
 | `/lastmeals` · `/lastsymptoms` · `/lastworkouts` · `/lastnotes` | Your last 3 of each, with times — to check what you've already logged |
 | `/shop` | Suggest a shopping list |
@@ -128,7 +128,7 @@ your data in plain files you own, and talks to no one but you and the model prov
 | `/savemeal <name>: <ingredients>` | Save a recurring meal (recipe) |
 | `/meallist` | List your saved meals |
 | `/delmeal <name>` | Remove a saved meal |
-| `/target` | Formula estimate + your calibrated working target (with why), what's left to eat today per nutrient, plus your recent weight trend |
+| `/target` | Formula estimate + your calibrated working target (with why), plus your recent weight trend |
 | `/addweight <kg>` | Update your weight (keeps targets current) |
 | `/setactivity <description>` | Update your activity level in plain language (recomputes targets) |
 | `/weekly` | Run the weekly review right now |

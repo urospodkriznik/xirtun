@@ -29,7 +29,7 @@ def test_today_report_empty(conn):
     assert "No meals" in reports.today_report(conn, NOW)
 
 
-def test_remaining_today_report_subtracts_what_was_eaten(conn):
+def test_today_report_subtracts_what_was_eaten_from_the_target(conn):
     targets.write_metrics(conn, dict(FULL_METRICS))
     targets.set_calibrated(
         conn, calories=2000, protein_min_g=100, protein_max_g=120,
@@ -41,7 +41,8 @@ def test_remaining_today_report_subtracts_what_was_eaten(conn):
         NOW.replace(hour=12).isoformat(),
     ))
 
-    out = reports.remaining_today_report(conn, NOW)
+    out = reports.today_report(conn, NOW)
+    assert "chicken and rice" in out                # the meal list still comes first
     assert "calibrated" in out
     assert "1200 kcal left" in out                  # 2000 - 800
     assert "40–60g left" in out                     # protein 100–120 minus 60
@@ -51,7 +52,7 @@ def test_remaining_today_report_subtracts_what_was_eaten(conn):
     assert "guidelines" in out                      # fat/carbs/sugar/fibre labelled
 
 
-def test_remaining_today_report_flags_going_over(conn):
+def test_today_report_flags_going_over(conn):
     targets.write_metrics(conn, dict(FULL_METRICS))
     targets.set_calibrated(
         conn, calories=2000, protein_min_g=100, protein_max_g=120, rationale="baseline",
@@ -62,22 +63,27 @@ def test_remaining_today_report_flags_going_over(conn):
         NOW.replace(hour=12).isoformat(),
     ))
 
-    out = reports.remaining_today_report(conn, NOW)
+    out = reports.today_report(conn, NOW)
     assert "500 kcal over" in out                   # calories past target
     assert "10g over" in out                        # protein past the band top
     assert "over the cap" in out                    # sugar past the ceiling
     assert "target met" in out                      # fibre floor reached
 
 
-def test_remaining_today_report_without_meals_shows_the_whole_day(conn):
+def test_today_report_shows_the_whole_target_before_any_meal(conn):
     targets.write_metrics(conn, dict(FULL_METRICS))
-    out = reports.remaining_today_report(conn, NOW)
-    assert "nothing logged yet" in out
+    out = reports.today_report(conn, NOW)
+    assert "No meals" in out
     assert "formula" in out                         # no calibration → formula target
+    formula = targets.compute(dict(FULL_METRICS))
+    assert f"{formula['calories']} kcal left" in out
 
 
-def test_remaining_today_report_without_metrics(conn):
-    assert "don't have" in reports.remaining_today_report(conn, NOW)
+def test_today_report_omits_remaining_without_a_target(conn):
+    diary.save_meal(conn, "x", _meal([{"name": "banana", "calories": 100}], NOW.isoformat()))
+    out = reports.today_report(conn, NOW)
+    assert "banana" in out
+    assert "Still to eat" not in out                # no metrics, nothing calibrated
 
 
 def test_week_report(conn):

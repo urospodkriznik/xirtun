@@ -23,25 +23,6 @@ def _totals(meals: list[dict[str, Any]]) -> dict[str, float]:
     return totals
 
 
-def today_report(conn: sqlite3.Connection, now: datetime) -> str:
-    start = now.replace(hour=0, minute=0, second=0, microsecond=0)
-    meals = diary.meals_since(conn, start.isoformat())
-    if not meals:
-        return "No meals logged today yet."
-
-    t = _totals(meals)
-    lines = [
-        f"Today — {len(meals)} meal(s), ~{round(t['calories'])} kcal "
-        f"({round(t['protein_g'])}g protein, {round(t['fat_g'])}g fat, "
-        f"{round(t['carbs_g'])}g carbs incl. {round(t['sugar_g'])}g sugar, "
-        f"{round(t['fiber_g'])}g fibre):"
-    ]
-    for meal in meals:
-        names = ", ".join(item["name"] for item in meal["items"])
-        lines.append(f"- {names}")
-    return "\n".join(lines)
-
-
 def _amount(value: float, unit: str) -> str:
     """'120g' / '1200 kcal' — grams hug the number, kcal doesn't."""
     return f"{round(value)}g" if unit == "g" else f"{round(value)} {unit}"
@@ -80,8 +61,9 @@ def _floor_line(label: str, eaten: float, floor: float) -> str:
     return f"- {label}: {_amount(eaten, 'g')} of ≥{_amount(floor, 'g')} → {_amount(floor - eaten, 'g')} to go"
 
 
-def remaining_today_report(conn: sqlite3.Connection, now: datetime) -> str:
-    """What's still left of today's target, nutrient by nutrient.
+def _remaining_lines(conn: sqlite3.Connection, eaten: dict[str, float]) -> list[str]:
+    """What's still left of today's target, nutrient by nutrient — or no lines at all
+    if there is no target to measure against yet (incomplete metrics, no calibration).
 
     Calories and protein come from the working target (calibrated if the weekly
     review has set one, formula otherwise); fat, carbs, sugar and fibre come from
@@ -90,30 +72,44 @@ def remaining_today_report(conn: sqlite3.Connection, now: datetime) -> str:
     """
     target = targets.working_target(conn)
     if target is None:
-        return (
-            "I can't work out what's left today — I don't have your full body metrics "
-            "and no target has been calibrated yet."
-        )
+        return []
 
+    g = targets.macro_guidelines(target["calories"])
+    return [
+        f"Still to eat today (vs the {target['source']} target):",
+        _point_line("Calories", eaten["calories"], target["calories"], "kcal"),
+        _range_line("Protein", eaten["protein_g"], target["protein_min_g"], target["protein_max_g"]),
+        _range_line("Fat", eaten["fat_g"], g["fat_min_g"], g["fat_max_g"]),
+        _range_line("Carbs", eaten["carbs_g"], g["carbs_min_g"], g["carbs_max_g"]),
+        _cap_line("Sugar", eaten["sugar_g"], g["sugar_max_g"]),
+        _floor_line("Fibre", eaten["fiber_g"], g["fiber_min_g"]),
+        "(Fat, carbs, sugar and fibre are general guidelines derived from your "
+        "calorie target — only calories and protein are calibrated for you.)",
+    ]
+
+
+def today_report(conn: sqlite3.Connection, now: datetime) -> str:
+    """Today's meals and totals, followed by what's still left of the day's target."""
     start = now.replace(hour=0, minute=0, second=0, microsecond=0)
     meals = diary.meals_since(conn, start.isoformat())
     t = _totals(meals)
-    g = targets.macro_guidelines(target["calories"])
 
-    header = f"Still to eat today (vs the {target['source']} target)"
-    if not meals:
-        header += " — nothing logged yet, so this is the whole day"
-    return "\n".join([
-        header + ":",
-        _point_line("Calories", t["calories"], target["calories"], "kcal"),
-        _range_line("Protein", t["protein_g"], target["protein_min_g"], target["protein_max_g"]),
-        _range_line("Fat", t["fat_g"], g["fat_min_g"], g["fat_max_g"]),
-        _range_line("Carbs", t["carbs_g"], g["carbs_min_g"], g["carbs_max_g"]),
-        _cap_line("Sugar", t["sugar_g"], g["sugar_max_g"]),
-        _floor_line("Fibre", t["fiber_g"], g["fiber_min_g"]),
-        "(Fat, carbs, sugar and fibre are general guidelines derived from your "
-        "calorie target — only calories and protein are calibrated for you.)",
-    ])
+    if meals:
+        lines = [
+            f"Today — {len(meals)} meal(s), ~{round(t['calories'])} kcal "
+            f"({round(t['protein_g'])}g protein, {round(t['fat_g'])}g fat, "
+            f"{round(t['carbs_g'])}g carbs incl. {round(t['sugar_g'])}g sugar, "
+            f"{round(t['fiber_g'])}g fibre):"
+        ]
+        for meal in meals:
+            names = ", ".join(item["name"] for item in meal["items"])
+            lines.append(f"- {names}")
+    else:
+        # Still worth answering: with nothing eaten, the whole target is what's left.
+        lines = ["No meals logged today yet."]
+
+    remaining = _remaining_lines(conn, t)
+    return "\n".join(lines + ["", *remaining] if remaining else lines)
 
 
 def week_report(conn: sqlite3.Connection, now: datetime) -> str:

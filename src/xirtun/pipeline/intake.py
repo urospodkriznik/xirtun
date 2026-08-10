@@ -101,7 +101,7 @@ HELP_TEXT = (
     "/addsymptom <text> — log how you feel\n"
     "/addnote <text> — save a note or goal for your weekly review\n"
     "/undo — remove your last entry (asks to confirm)\n"
-    "/today — today's meals and totals\n"
+    "/today — today's meals, totals, and what's still left to eat\n"
     "/week — the past 7 days\n"
     "/lastmeals — your last 3 meals\n"
     "/lastsymptoms — your last 3 symptoms\n"
@@ -115,7 +115,7 @@ HELP_TEXT = (
     "/savemeal <name>: <ingredients> — save a recurring meal\n"
     "/meallist — list your saved meals\n"
     "/delmeal <name> — remove a saved meal\n"
-    "/target — your daily targets and what's still left to eat today\n"
+    "/target — your daily calorie & protein target\n"
     "/addweight <kg> — update your weight\n"
     "/setactivity <description> — update your activity level in plain language\n"
     "/export — download your diary as a JSON backup\n"
@@ -296,8 +296,6 @@ def handle_message(
     if text == "/target":
         messenger.send(
             targets.format_all_targets(conn)
-            + "\n\n"
-            + reports.remaining_today_report(conn, now or datetime.now().astimezone())
             + "\n\n"
             + targets.format_weight_trend(conn, now=now)
         )
