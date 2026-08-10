@@ -67,7 +67,9 @@ your data in plain files you own, and talks to no one but you and the model prov
   both numbers and the rationale for the current calibration.
 - **`/today`** ends with **what's still left to eat** for every nutrient — calories
   and protein against your working target, fat/carbs/sugar/fibre against guideline
-  amounts derived from it — and **`/week`** gives real totals and per-day averages.
+  amounts derived from it. **`/week`** answers the same question over time: totals,
+  then the **daily average and how far it sits from the target** ("~110g protein/day
+  of 100–120g → on target"), averaged over the days you actually logged.
 
 **Proactive help**
 - **Weekly autonomous review** — a tool-using agent reviews your recent diary, your
@@ -118,7 +120,7 @@ your data in plain files you own, and talks to no one but you and the model prov
 | `/addnote <text>` | Save a note or goal for your weekly review |
 | `/undo` | Remove your last logged entry (asks to confirm, shows what it'll delete) |
 | `/today` | Today's meals and totals, plus what's still left to eat per nutrient |
-| `/week` | The past 7 days, with per-day averages |
+| `/week` | The past 7 days: totals, plus per-day averages and how far each one sits from the target |
 | `/lastmeals` · `/lastsymptoms` · `/lastworkouts` · `/lastnotes` | Your last 3 of each, with times — to check what you've already logged |
 | `/shop` | Suggest a shopping list |
 | `/savefood <name>: <per-100g nutrition>` | Save a food's label (with package size + fibre) |

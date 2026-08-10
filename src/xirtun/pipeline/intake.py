@@ -102,7 +102,7 @@ HELP_TEXT = (
     "/addnote <text> — save a note or goal for your weekly review\n"
     "/undo — remove your last entry (asks to confirm)\n"
     "/today — today's meals, totals, and what's still left to eat\n"
-    "/week — the past 7 days\n"
+    "/week — the past 7 days, and how your daily average compares to target\n"
     "/lastmeals — your last 3 meals\n"
     "/lastsymptoms — your last 3 symptoms\n"
     "/lastworkouts — your last 3 workouts\n"

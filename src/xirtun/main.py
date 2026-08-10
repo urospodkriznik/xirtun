@@ -42,7 +42,7 @@ COMMANDS = [
     ("addnote", "Save a note or goal for your weekly review"),
     ("undo", "Remove your last logged entry"),
     ("today", "Today's meals, totals and what's left"),
-    ("week", "Your past 7 days"),
+    ("week", "Your past 7 days vs target"),
     ("lastmeals", "Your last 3 meals"),
     ("lastsymptoms", "Your last 3 symptoms"),
     ("lastworkouts", "Your last 3 workouts"),

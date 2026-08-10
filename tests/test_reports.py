@@ -1,6 +1,6 @@
 """Tests for the deterministic /today and /week reports."""
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from xirtun import reports, targets
 from xirtun.storage import diary
@@ -90,6 +90,55 @@ def test_week_report(conn):
     diary.save_meal(conn, "rice", _meal([{"name": "rice", "calories": 200}], NOW.isoformat()))
     out = reports.week_report(conn, NOW)
     assert "Past 7 days" in out and "200" in out
+
+
+def test_week_report_averages_over_logged_days_and_compares_to_target(conn):
+    targets.write_metrics(conn, dict(FULL_METRICS))
+    targets.set_calibrated(
+        conn, calories=2000, protein_min_g=100, protein_max_g=120, rationale="baseline",
+    )
+    # Two logged days inside the window, three days apart — the average is over the
+    # 2 days with entries, not over 7.
+    for days_ago, kcal in ((1, 1600), (4, 1800)):
+        diary.save_meal(conn, "day", _meal(
+            [{"name": "food", "calories": kcal, "protein_g": 110,
+              "fat_g": 60, "carbs_g": 200, "sugar_g": 20, "fiber_g": 25}],
+            (NOW - timedelta(days=days_ago)).isoformat(),
+        ))
+
+    out = reports.week_report(conn, NOW)
+    assert "across 2 day(s)" in out
+    assert "~1700 kcal/day" in out                   # (1600 + 1800) / 2, not / 7
+    assert "300 kcal/day short" in out               # 2000 - 1700
+    assert "- Protein: ~110g/day of 100–120g → on target" in out
+    assert "calibrated target" in out
+
+
+def test_week_report_flags_averages_over_the_target(conn):
+    targets.write_metrics(conn, dict(FULL_METRICS))
+    targets.set_calibrated(
+        conn, calories=2000, protein_min_g=100, protein_max_g=120, rationale="baseline",
+    )
+    diary.save_meal(conn, "big", _meal(
+        [{"name": "feast", "calories": 3000, "protein_g": 200,
+          "fat_g": 0, "carbs_g": 0, "sugar_g": 200, "fiber_g": 0}],
+        NOW.isoformat(),
+    ))
+
+    out = reports.week_report(conn, NOW)
+    assert "1000 kcal/day over" in out               # 3000 vs 2000
+    assert "80g/day over" in out                     # protein past the band top
+    g = targets.macro_guidelines(2000)
+    assert f"{200 - g['sugar_max_g']}g/day over" in out
+    assert f"{g['fiber_min_g']}g/day short" in out   # no fibre at all
+
+
+def test_week_report_shows_bare_averages_without_a_target(conn):
+    diary.save_meal(conn, "x", _meal([{"name": "rice", "calories": 400}], NOW.isoformat()))
+    out = reports.week_report(conn, NOW)
+    assert "- Calories: ~400 kcal/day" in out        # average still shown
+    assert "vs the" not in out                       # but nothing to compare against
+    assert "guidelines" not in out
 
 
 def test_recent_meals_report(conn):

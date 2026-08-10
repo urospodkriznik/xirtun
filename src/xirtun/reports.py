@@ -47,18 +47,30 @@ def _point_line(label: str, eaten: float, target: float, unit: str) -> str:
     return f"- {label}: {round(eaten)} of ~{_amount(target, unit)} → {verdict}"
 
 
+def _band_text(lo: float | None, hi: float | None, unit: str) -> str:
+    """How a target reads: '~2744 kcal' (point), '112–128g' (range), '≤69g' (cap),
+    '≥38g' (floor). An open end is passed as None."""
+    if lo is not None and hi is not None:
+        return f"~{_amount(lo, unit)}" if lo == hi else f"{round(lo)}–{_amount(hi, unit)}"
+    if hi is not None:
+        return f"≤{_amount(hi, unit)}"
+    return f"≥{_amount(lo or 0, unit)}"
+
+
 def _cap_line(label: str, eaten: float, cap: float) -> str:
     """Eaten vs a ceiling (sugar) — the goal is to stay under it, not to reach it."""
+    band = _band_text(None, cap, "g")
     if eaten > cap:
-        return f"- {label}: {_amount(eaten, 'g')} of ≤{_amount(cap, 'g')} → {_amount(eaten - cap, 'g')} over the cap"
-    return f"- {label}: {_amount(eaten, 'g')} of ≤{_amount(cap, 'g')} → {_amount(cap - eaten, 'g')} before the cap"
+        return f"- {label}: {_amount(eaten, 'g')} of {band} → {_amount(eaten - cap, 'g')} over the cap"
+    return f"- {label}: {_amount(eaten, 'g')} of {band} → {_amount(cap - eaten, 'g')} before the cap"
 
 
 def _floor_line(label: str, eaten: float, floor: float) -> str:
     """Eaten vs a minimum (fibre) — the goal is to reach it, with no upper bound."""
+    band = _band_text(floor, None, "g")
     if eaten >= floor:
-        return f"- {label}: {_amount(eaten, 'g')} of ≥{_amount(floor, 'g')} → target met"
-    return f"- {label}: {_amount(eaten, 'g')} of ≥{_amount(floor, 'g')} → {_amount(floor - eaten, 'g')} to go"
+        return f"- {label}: {_amount(eaten, 'g')} of {band} → target met"
+    return f"- {label}: {_amount(eaten, 'g')} of {band} → {_amount(floor - eaten, 'g')} to go"
 
 
 def _remaining_lines(conn: sqlite3.Connection, eaten: dict[str, float]) -> list[str]:
@@ -112,6 +124,68 @@ def today_report(conn: sqlite3.Connection, now: datetime) -> str:
     return "\n".join(lines + ["", *remaining] if remaining else lines)
 
 
+def _average_line(
+    label: str, avg: float, lo: float | None = None, hi: float | None = None, unit: str = "g"
+) -> str:
+    """A daily average and how it sits against its target band, e.g.
+    'Protein: ~90g/day of 112–128g → 22g/day short'. A point target has lo == hi, a
+    cap has no lo, a floor has no hi; with no target at all (both None) the line is
+    just the average."""
+    line = f"- {label}: ~{_amount(avg, unit)}/day"
+    if lo is None and hi is None:
+        return line
+
+    if lo is not None and avg < lo:
+        verdict = f"{_amount(lo - avg, unit)}/day short"
+    elif hi is not None and avg > hi:
+        verdict = f"{_amount(avg - hi, unit)}/day over"
+    else:
+        verdict = "on target"
+    return f"{line} of {_band_text(lo, hi, unit)} → {verdict}"
+
+
+# label, totals key, unit — the order these are reported in.
+_NUTRIENTS = (
+    ("Calories", "calories", "kcal"),
+    ("Protein", "protein_g", "g"),
+    ("Fat", "fat_g", "g"),
+    ("Carbs", "carbs_g", "g"),
+    ("Sugar", "sugar_g", "g"),
+    ("Fibre", "fiber_g", "g"),
+)
+
+
+def _average_lines(conn: sqlite3.Connection, avg: dict[str, float], days_logged: int) -> list[str]:
+    """Daily averages measured against the target — the weekly counterpart of
+    ``_remaining_lines``. Without a target the averages are still worth showing, so
+    the lines come back bare rather than not at all."""
+    target = targets.working_target(conn)
+    bands: dict[str, tuple[float | None, float | None]] = {}
+    if target is not None:
+        g = targets.macro_guidelines(target["calories"])
+        bands = {
+            "calories": (target["calories"], target["calories"]),
+            "protein_g": (target["protein_min_g"], target["protein_max_g"]),
+            "fat_g": (g["fat_min_g"], g["fat_max_g"]),
+            "carbs_g": (g["carbs_min_g"], g["carbs_max_g"]),
+            "sugar_g": (None, g["sugar_max_g"]),
+            "fiber_g": (g["fiber_min_g"], None),
+        }
+
+    header = f"Daily average across the {days_logged} day(s) you logged"
+    header += f", vs the {target['source']} target:" if target else ":"
+    lines = [header]
+    for label, key, unit in _NUTRIENTS:
+        lo, hi = bands.get(key, (None, None))
+        lines.append(_average_line(label, avg[key], lo, hi, unit))
+    if target is not None:
+        lines.append(
+            "(Fat, carbs, sugar and fibre are general guidelines derived from your "
+            "calorie target — only calories and protein are calibrated for you.)"
+        )
+    return lines
+
+
 def week_report(conn: sqlite3.Connection, now: datetime) -> str:
     start = now - timedelta(days=7)
     meals = diary.meals_since(conn, start.isoformat())
@@ -123,19 +197,19 @@ def week_report(conn: sqlite3.Connection, now: datetime) -> str:
     t = _totals(meals)
     # Average over days that actually have entries (the date part of occurred_at),
     # not a flat 7 — otherwise sparse logging looks misleadingly low.
-    days_logged = len({meal["occurred_at"][:10] for meal in meals}) or 1
-    return (
-        f"Past 7 days — {len(meals)} meals across {days_logged} day(s), "
-        f"~{round(t['calories'])} kcal total "
-        f"(~{round(t['calories'] / days_logged)}/day on logged days), "
-        f"{round(t['protein_g'])}g protein total "
-        f"(~{round(t['protein_g'] / days_logged)}/day), "
-        f"{round(t['fiber_g'])}g fibre total "
-        f"(~{round(t['fiber_g'] / days_logged)}/day). "
+    days_logged = len({meal["occurred_at"][:10] for meal in meals})
+    lines = [
+        f"Past 7 days — {len(meals)} meals across {days_logged} day(s): "
+        f"~{round(t['calories'])} kcal, {round(t['protein_g'])}g protein, "
+        f"{round(t['fiber_g'])}g fibre in total. "
         f"Exercise: {len(exercises)} session(s), "
         f"~{round(sum(e.get('calories_burned') or 0 for e in exercises))} kcal burned. "
         f"Symptoms logged: {len(symptoms)}."
-    )
+    ]
+    if days_logged:
+        avg = {key: value / days_logged for key, value in t.items()}
+        lines += ["", *_average_lines(conn, avg, days_logged)]
+    return "\n".join(lines)
 
 
 def _fmt_time(iso: str) -> str:
