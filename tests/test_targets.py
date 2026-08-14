@@ -81,3 +81,49 @@ def test_set_calibrated_requires_rationale_and_metrics(conn):
 
 def test_format_calibrated_when_unset(conn):
     assert "No calibrated target" in targets.format_calibrated(conn)
+
+
+# --- weight-trend staleness ---
+
+def _log(conn, when, kg):
+    targets.update_weight(conn, kg, now=when)
+
+
+def test_weight_trend_flags_stale_latest_entry(conn):
+    """Regression (prod 2026-08-13): the review ran with the newest weight 7 days old,
+    so the 35-day decline covered none of the reviewed week — but the trend text gave no
+    staleness signal, so the agent called it 'this week' and raised the target on it."""
+    from datetime import datetime, timedelta
+
+    now = datetime(2026, 8, 13, 17, 0)
+    _log(conn, now - timedelta(days=42), 85.0)
+    _log(conn, now - timedelta(days=7), 81.3)      # newest entry predates the week
+
+    out = targets.format_weight_trend(conn, now=now)
+    assert "85kg → 81.3kg" in out                  # history still reported
+    assert "STALE" in out
+    assert "7 days old" in out
+    assert "NO data from the week" in out
+    assert "do NOT recalibrate" in out.replace("Do NOT", "do NOT")
+
+
+def test_weight_trend_marks_recent_entry_as_covering_the_week(conn):
+    from datetime import datetime, timedelta
+
+    now = datetime(2026, 8, 13, 17, 0)
+    _log(conn, now - timedelta(days=20), 85.0)
+    _log(conn, now - timedelta(days=1), 83.0)
+
+    out = targets.format_weight_trend(conn, now=now)
+    assert "STALE" not in out
+    assert "1d old" in out
+    assert "does cover the week" in out
+
+
+def test_single_weight_reports_its_age(conn):
+    from datetime import datetime, timedelta
+
+    now = datetime(2026, 8, 13, 17, 0)
+    _log(conn, now - timedelta(days=9), 82.0)
+    out = targets.format_weight_trend(conn, now=now)
+    assert "9d ago" in out and "Not enough for a trend" in out

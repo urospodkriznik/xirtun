@@ -83,9 +83,22 @@ def weight_history(conn: sqlite3.Connection, since_iso: str) -> list[dict[str, A
     return [dict(r) for r in rows]
 
 
+# A latest weight older than this covers none of the week under review, so the trend
+# says nothing about that week's intake. Compared on whole days (never on aware-vs-naive
+# datetimes, which the DB and callers mix).
+STALE_WEIGHT_DAYS = 7
+
+
+def _age_in_days(occurred_at: str, now: datetime) -> int:
+    return (now.date() - datetime.fromisoformat(occurred_at).date()).days
+
+
 def format_weight_trend(conn: sqlite3.Connection, now: datetime | None = None, days: int = 56) -> str:
     """Human-readable weight trend over the last ``days`` for the weekly agent: the
-    first and latest logged weight, net change, and approximate weekly rate."""
+    first and latest logged weight, net change, approximate weekly rate, and — crucially
+    — how STALE the latest entry is. Without that, a month-old decline reads as if it
+    were this week's, and the agent will 'explain' this week's eating with it (and even
+    recalibrate targets on it)."""
     now = now or datetime.now()
     since = (now - timedelta(days=days)).isoformat()
     history = weight_history(conn, since)
@@ -97,18 +110,38 @@ def format_weight_trend(conn: sqlite3.Connection, now: datetime | None = None, d
         )
     if len(history) == 1:
         h = history[0]
-        return f"Only one weight logged ({h['weight_kg']:g}kg on {h['occurred_at'][:10]}). Not enough for a trend yet."
+        return (
+            f"Only one weight logged ({h['weight_kg']:g}kg on {h['occurred_at'][:10]}, "
+            f"{_age_in_days(h['occurred_at'], now)}d ago). Not enough for a trend yet."
+        )
 
     first, last = history[0], history[-1]
     delta = last["weight_kg"] - first["weight_kg"]
     span_days = max(1, (datetime.fromisoformat(last["occurred_at"]) - datetime.fromisoformat(first["occurred_at"])).days)
     per_week = delta / span_days * 7
     direction = "down" if delta < 0 else ("up" if delta > 0 else "flat")
+    stale_days = _age_in_days(last["occurred_at"], now)
+
+    if stale_days >= STALE_WEIGHT_DAYS:
+        freshness = (
+            f"⚠ STALE: the latest weight is {stale_days} days old (logged "
+            f"{last['occurred_at'][:10]}), so this trend contains NO data from the week "
+            "you are reviewing. It cannot tell you whether THIS week's intake was right. "
+            "Do NOT describe it as this week's trend, do NOT explain this week's eating "
+            "with it, and do NOT recalibrate targets from it — ask for a fresh /addweight "
+            "instead."
+        )
+    else:
+        freshness = (
+            f"Latest weight is {stale_days}d old, so the trend does cover the week under "
+            "review. Treat this trend — not the formula — as the truth about whether "
+            "intake is too high or too low."
+        )
+
     return (
         f"Weight trend ({len(history)} entries over {span_days}d): "
         f"{first['weight_kg']:g}kg → {last['weight_kg']:g}kg "
-        f"({delta:+.1f}kg, ~{per_week:+.2f}kg/week, {direction}). "
-        "Treat this trend — not the formula — as the truth about whether intake is too high or too low."
+        f"({delta:+.1f}kg, ~{per_week:+.2f}kg/week, {direction}). {freshness}"
     )
 
 
