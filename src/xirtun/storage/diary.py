@@ -215,10 +215,20 @@ def exercises_since(conn: sqlite3.Connection, since_iso: str) -> list[dict[str, 
     return [dict(r) for r in rows]
 
 
-def all_meals(conn: sqlite3.Connection) -> list[dict[str, Any]]:
-    """Every meal (with its items), oldest first — full fidelity, for /export."""
+def _window(since_iso: str | None) -> tuple[str, tuple[str, ...]]:
+    """A WHERE clause limiting rows to on/after `since_iso` — empty when unbounded.
+    Returned with its parameters so callers never format values into SQL."""
+    return ("WHERE occurred_at >= ? ", (since_iso,)) if since_iso else ("", ())
+
+
+def all_meals(conn: sqlite3.Connection, since_iso: str | None = None) -> list[dict[str, Any]]:
+    """Every meal (with its items), oldest first — full fidelity, for the exports.
+    Unbounded by default (the backup takes everything); `since_iso` limits the window."""
+    where, params = _window(since_iso)
     rows = conn.execute(
-        "SELECT id, occurred_at, logged_at, raw_text, notes FROM meals ORDER BY occurred_at, id"
+        "SELECT id, occurred_at, logged_at, raw_text, notes FROM meals "
+        f"{where}ORDER BY occurred_at, id",
+        params,
     ).fetchall()
     result = []
     for r in rows:
@@ -233,20 +243,24 @@ def all_meals(conn: sqlite3.Connection) -> list[dict[str, Any]]:
     return result
 
 
-def all_symptoms(conn: sqlite3.Connection) -> list[dict[str, Any]]:
-    """Every symptom event, oldest first — full fidelity, for /export."""
+def all_symptoms(conn: sqlite3.Connection, since_iso: str | None = None) -> list[dict[str, Any]]:
+    """Every symptom event, oldest first — full fidelity, for the exports."""
+    where, params = _window(since_iso)
     rows = conn.execute(
         "SELECT occurred_at, logged_at, type, severity, duration, raw_text, tags "
-        "FROM symptoms ORDER BY occurred_at, id"
+        f"FROM symptoms {where}ORDER BY occurred_at, id",
+        params,
     ).fetchall()
     return [_item_with_tags(r) for r in rows]
 
 
-def all_exercises(conn: sqlite3.Connection) -> list[dict[str, Any]]:
-    """Every exercise event, oldest first — full fidelity, for /export."""
+def all_exercises(conn: sqlite3.Connection, since_iso: str | None = None) -> list[dict[str, Any]]:
+    """Every exercise event, oldest first — full fidelity, for the exports."""
+    where, params = _window(since_iso)
     rows = conn.execute(
         "SELECT occurred_at, logged_at, type, duration_min, intensity, calories_burned, "
-        "distance_km, raw_text, notes, tags FROM exercises ORDER BY occurred_at, id"
+        f"distance_km, raw_text, notes, tags FROM exercises {where}ORDER BY occurred_at, id",
+        params,
     ).fetchall()
     return [_item_with_tags(r) for r in rows]
 

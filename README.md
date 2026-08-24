@@ -103,9 +103,22 @@ your data in plain files you own, and talks to no one but you and the model prov
   suggestions drawn from your goals, recent diet, and gaps (and it won't suggest what
   you already ate this week).
 
+**Two exports, two jobs**
+- **`/exportbackup`** — everything, as versioned JSON meant to be parsed and restored:
+  the diary, your body metrics and targets, weight log, saved foods and recipes, every
+  weekly review, and the memory files (`diet.md` with its history snapshots, plus
+  `observations.md`).
+- **`/exportdeepdive`** — the last 90 days written up as one Markdown briefing for a
+  large model: who you are, what you're aiming at, daily totals, every meal in your
+  own words, symptom adjacency, patterns already computed, and every weekly review
+  the agent has written. Upload it to Opus (or any long-context model) and ask for
+  the analysis a weekly summary can't give you. It flags its own weak spots — logging
+  gaps, and rows whose macros can't produce their calories — so the reader knows what
+  to distrust.
+
 **Housekeeping**
-- Undo (with confirmation), export your whole diary to JSON, wipe everything (with
-  confirmation), view your profile, and a slash-command menu in the Telegram client.
+- Undo (with confirmation), wipe everything (with confirmation), view your profile,
+  and a slash-command menu in the Telegram client.
 
 ---
 
@@ -136,7 +149,8 @@ your data in plain files you own, and talks to no one but you and the model prov
 | `/weekly` | Run the weekly review right now |
 | `/settimezone <IANA name>` | Set your timezone, e.g. `/settimezone Europe/Ljubljana` — takes effect immediately, no restart |
 | `/profile` | Show your profile and body metrics |
-| `/export` | Export your full diary (meals, symptoms, foods) as JSON |
+| `/exportbackup` | Export everything as JSON — diary, metrics, targets, weights, weekly reviews, memory files |
+| `/exportdeepdive` | Export the last 90 days as a Markdown briefing to upload to a large model |
 | `/cleardata` | Erase all your data (asks to confirm) |
 | `/skip` | Skip a weekly-review calibration question |
 | `/help` | What I can do |
@@ -238,7 +252,8 @@ src/xirtun/
   scheduler.py       APScheduler weekly + weight-reminder triggers
   reports.py         deterministic /today and /week reports
   targets.py         calorie/protein targets (Mifflin–St Jeor)
-  export.py          /export diary dump
+  export.py          /exportbackup diary dump (JSON)
+  deepdive.py        /exportdeepdive briefing (Markdown)
   messaging/         Messenger protocol + Telegram transport (incl. voice)
   llm/               LLMClient protocol + Gemini adapter (structured output, audio, retries)
   storage/           SQLite: diary, custom foods, runs, admin/reset

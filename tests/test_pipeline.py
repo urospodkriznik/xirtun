@@ -236,24 +236,105 @@ def test_handle_message_help(conn):
     assert "/undo" in messenger.sent[-1]
 
 
-def test_handle_message_export_dumps_diary(conn):
-    from xirtun.storage import foods
+def test_handle_message_exportbackup_dumps_everything_needed_to_restore(conn, tmp_path):
+    from xirtun import targets
+    from xirtun.storage import foods, weekly_reports
 
     diary.save_meal(conn, "banana", _meal([{"name": "banana", "calories": 90, "tags": ["fruit"]}]))
     diary.save_symptom(conn, "headache", _symptom("headache", severity=2))
     foods.add(conn, {"name": "Tofu", "calories": 120})
+    targets.write_metrics(conn, {
+        "sex": "male", "birth_year": 1994, "height_cm": 180,
+        "weight_kg": 80, "activity": "moderate",
+    })
+    targets.update_weight(conn, 78.5)
+    targets.set_calibrated(
+        conn, calories=2400, protein_min_g=110, protein_max_g=130, rationale="steady",
+    )
+    weekly_reports.save(conn, "Fibre was low.", manner="scheduled")
+    diet = tmp_path / "diet.md"
+    diet.write_text("# Profile\n- vegan")
+    observations = tmp_path / "observations.md"
+    observations.write_text("Protein trending up.")
     messenger = FakeMessenger()
 
-    handle_message("/export", chat_id="c1", llm=FakeLLM(), conn=conn, messenger=messenger)
+    handle_message(
+        "/exportbackup", chat_id="c1", llm=FakeLLM(), conn=conn, messenger=messenger,
+        diet_path=diet, observations_path=observations,
+    )
 
     assert len(messenger.documents) == 1
     filename, content, _caption = messenger.documents[0]
     assert filename.endswith(".json")
     data = json.loads(content)
+
+    assert data["version"] == 2
+    # The diary itself.
     assert data["meals"][0]["items"][0]["name"] == "banana"
     assert data["meals"][0]["items"][0]["tags"] == ["fruit"]   # JSON column decoded
     assert data["symptoms"][0]["type"] == "headache"
     assert data["known_foods"][0]["name"] == "Tofu"
+    # Everything the old version dropped on the floor.
+    assert data["metrics"]["height_cm"] == 180
+    assert data["targets"]["calibrated"]["calories"] == 2400
+    assert data["targets"]["formula"]["calories"] > 0
+    assert data["weight_log"][-1]["weight_kg"] == 78.5
+    assert data["weekly_reports"][0]["report"] == "Fibre was low."
+    assert "vegan" in data["memory"]["diet_md"]
+    assert "Protein trending up." in data["memory"]["observations_md"]
+
+
+def test_exportbackup_includes_diet_history_snapshots(conn, tmp_path):
+    from xirtun.memory import diet as memory
+
+    diet = tmp_path / "diet.md"
+    memory.write_diet(diet, "# Profile\n- first version")
+    memory.write_diet(diet, "# Profile\n- second version")   # snapshots the first
+    messenger = FakeMessenger()
+
+    handle_message(
+        "/exportbackup", chat_id="c1", llm=FakeLLM(), conn=conn, messenger=messenger,
+        diet_path=diet,
+    )
+
+    data = json.loads(messenger.documents[0][1])
+    assert "second version" in data["memory"]["diet_md"]
+    assert len(data["memory"]["diet_history"]) == 1
+    assert "first version" in data["memory"]["diet_history"][0]["content"]
+
+
+def test_handle_message_exportdeepdive_sends_markdown_and_a_privacy_warning(conn, tmp_path):
+    from xirtun import targets
+
+    targets.write_metrics(conn, {
+        "sex": "male", "birth_year": 1994, "height_cm": 180,
+        "weight_kg": 80, "activity": "moderate",
+    })
+    diary.save_meal(conn, "a banana", _meal([{"name": "banana", "calories": 90}]))
+    diet = tmp_path / "diet.md"
+    diet.write_text("# Profile\n- vegan")
+    messenger = FakeMessenger()
+
+    handle_message(
+        "/exportdeepdive", chat_id="c1", llm=FakeLLM(), conn=conn, messenger=messenger,
+        diet_path=diet,
+    )
+
+    assert len(messenger.documents) == 1
+    filename, content, caption = messenger.documents[0]
+    assert filename.endswith(".md")
+    assert content.startswith("# Nutrition deep-dive export")
+    assert "banana" in content and "vegan" in content
+    assert "90 days" in caption
+    # The warning is a separate message so it isn't lost under a file preview.
+    assert "sensitive" in messenger.sent[-1]
+
+
+def test_handle_message_rejects_the_old_export_command(conn):
+    messenger = FakeMessenger()
+    handle_message("/export", chat_id="c1", llm=FakeLLM(), conn=conn, messenger=messenger)
+    assert not messenger.documents
+    assert "don't recognize" in messenger.sent[-1]
 
 
 def test_handle_message_profile(conn, tmp_path):

@@ -24,7 +24,7 @@ from xirtun.logging_setup import setup_logging
 from xirtun.messaging.base import Messenger
 from xirtun.messaging.telegram import TelegramMessenger
 from xirtun.pipeline import weekly_qa
-from xirtun.storage import db, runs
+from xirtun.storage import db, runs, weekly_reports
 
 logger = logging.getLogger(__name__)
 
@@ -89,6 +89,13 @@ def run_weekly_review(
             tz=tz,
             now=now,
         )
+        if result.report:
+            # Persist before delivery: a manual run holds its report back until the
+            # Q&A is answered (and /skip may mean it is never sent at all), but the
+            # agent's analysis is worth keeping either way.
+            weekly_reports.save(
+                conn, result.report, manner=manner, questions=result.questions, now=now,
+            )
         if result.incomplete:
             # The agent ran out of tool-call turns before it could write the report —
             # some tool calls (e.g. set_targets) may already have taken effect, but

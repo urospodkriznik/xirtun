@@ -73,7 +73,7 @@ unpredictable for a well-defined task.
 
 ```
 on IncomingMessage:
-    if message is a command (/addmeal, /undo, /export, ...): handle directly
+    if message is a command (/addmeal, /undo, /exportbackup, ...): handle directly
     else:
         intent = cheap_llm.classify(message, diet.md, pending_session?)
             -> one of: meal | symptom | correction | other | continue_meal
@@ -240,8 +240,21 @@ CREATE TABLE runs (                -- weekly-run idempotency / catch-up
     status      TEXT NOT NULL      -- "running" | "ok" | "error"
 );
 
+CREATE TABLE weekly_reports (      -- every report the agent writes, kept verbatim
+    id          INTEGER PRIMARY KEY,
+    created_at  TEXT NOT NULL,
+    manner      TEXT NOT NULL,     -- "scheduled" | "manual"
+    report      TEXT NOT NULL,
+    questions   TEXT NOT NULL      -- JSON array of follow-up questions
+);
+
 CREATE TABLE kv (k TEXT PRIMARY KEY, v TEXT);  -- e.g. telegram update offset
 ```
+
+Reports are saved when the agent produces them, not when they're delivered — a
+manual run holds its report until the follow-up Q&A is answered, and a skipped
+Q&A means it is never sent at all. `/exportdeepdive` reads them back: a year of
+past reviews is the richest section of that export.
 
 Numbers are **estimates** by design (ADR-003). `raw_text` is always kept so the
 weekly run and future re-processing can re-derive structure if needed.

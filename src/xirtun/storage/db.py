@@ -96,6 +96,17 @@ CREATE TABLE IF NOT EXISTS weekly_qa (
     updated_at TEXT NOT NULL
 );
 
+-- Every weekly report the agent writes, kept verbatim. Reports used to be sent to
+-- Telegram and forgotten; they are the richest analysis this app produces, and the
+-- deep-dive export is worth far more with a year of them in it.
+CREATE TABLE IF NOT EXISTS weekly_reports (
+    id         INTEGER PRIMARY KEY,
+    created_at TEXT NOT NULL,
+    manner     TEXT NOT NULL,          -- "scheduled" | "manual"
+    report     TEXT NOT NULL,
+    questions  TEXT NOT NULL DEFAULT '[]'   -- JSON array of follow-up questions
+);
+
 CREATE TABLE IF NOT EXISTS runs (
     id          INTEGER PRIMARY KEY,
     kind        TEXT NOT NULL,

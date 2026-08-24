@@ -18,6 +18,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Iterator
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, Callable
 
 import httpx
@@ -93,15 +94,20 @@ class TelegramMessenger:
         )
         resp.raise_for_status()  # turns a 4xx/5xx into an exception
 
+    # What a client should open the upload as, by extension. Telegram doesn't require
+    # this, but it decides whether a file previews inline or only downloads.
+    _MIME_TYPES = {".json": "application/json", ".md": "text/markdown"}
+
     def send_document(self, filename: str, content: str, caption: str | None = None) -> None:
         """Upload `content` as a file the user can download (multipart sendDocument)."""
         data = {"chat_id": self._chat_id}
         if caption:
             data["caption"] = caption
+        mime_type = self._MIME_TYPES.get(Path(filename).suffix, "text/plain")
         resp = self._client.post(
             f"{self._base}/sendDocument",
             data=data,
-            files={"document": (filename, content.encode("utf-8"), "application/json")},
+            files={"document": (filename, content.encode("utf-8"), mime_type)},
         )
         resp.raise_for_status()
 

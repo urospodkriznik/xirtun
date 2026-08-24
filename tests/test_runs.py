@@ -8,7 +8,7 @@ from xirtun.llm.fake import FakeLLM
 from xirtun.messaging.fake import FakeMessenger
 from xirtun.pipeline import weekly_qa
 from xirtun.run_weekly import run_weekly_review
-from xirtun.storage import runs
+from xirtun.storage import runs, weekly_reports
 
 TZ = timezone.utc
 CHAT_ID = "c1"
@@ -151,3 +151,34 @@ def test_manual_run_with_no_questions_sends_immediately(conn, tmp_path):
 
     assert messenger.sent == ["Nothing to flag this week."]
     assert weekly_qa.get(conn, CHAT_ID, now=now) is None
+
+
+def test_every_report_is_persisted_even_when_delivery_is_held(conn, tmp_path):
+    """A manual run with questions holds the report back until the Q&A is answered —
+    and /skip may mean it is never sent at all. Store it either way: the deep-dive
+    export is built from these, and a report the user skipped is still analysis."""
+    now = datetime(2026, 1, 8, 9, 0, tzinfo=TZ)
+    messenger = FakeMessenger()
+    llm = _finishing_llm(final_message="Fibre was low.", questions=["How was your energy?"])
+
+    _review(conn, tmp_path, llm, now=now, force=True, messenger=messenger, manner="manual")
+
+    assert "Fibre was low." not in messenger.sent          # held for the Q&A
+    stored = weekly_reports.since(conn, "0000-01-01")
+    assert len(stored) == 1
+    assert stored[0]["report"] == "Fibre was low."
+    assert stored[0]["questions"] == ["How was your energy?"]
+    assert stored[0]["manner"] == "manual"
+
+
+def test_incomplete_run_stores_no_report(conn, tmp_path):
+    now = datetime(2026, 1, 8, 17, 0, tzinfo=TZ)
+    llm = FakeLLM([
+        LLMResponse(data={"thought": "t", "tool": "read_diet", "args_json": "{}",
+                          "final_message": None, "questions": []})
+        for _ in range(30)
+    ])
+
+    _review(conn, tmp_path, llm, now=now, force=True, manner="scheduled")
+
+    assert weekly_reports.since(conn, "0000-01-01") == []

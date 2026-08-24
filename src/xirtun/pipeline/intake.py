@@ -38,7 +38,7 @@ from xirtun.pipeline.models import ActivityClassification
 from xirtun.pipeline.shopping import suggest_shopping
 from xirtun.pipeline.structure import structure_meal
 from xirtun.pipeline.symptom import structure_symptom
-from xirtun import export, reports, targets
+from xirtun import deepdive, export, reports, targets
 from xirtun.storage import admin, custom_meals, db, diary, foods
 
 logger = logging.getLogger(__name__)
@@ -118,7 +118,8 @@ HELP_TEXT = (
     "/target — your daily calorie & protein target\n"
     "/addweight <kg> — update your weight\n"
     "/setactivity <description> — update your activity level in plain language\n"
-    "/export — download your diary as a JSON backup\n"
+    "/exportbackup — download everything as a JSON backup\n"
+    "/exportdeepdive — download a Markdown write-up to feed a bigger model\n"
     "/profile — show your profile and body metrics\n"
     "/weekly — run your weekly review now\n"
     "/settimezone <IANA name> — set your timezone, e.g. /settimezone Europe/Ljubljana\n"
@@ -300,11 +301,34 @@ def handle_message(
             + targets.format_weight_trend(conn, now=now)
         )
         return
-    if text == "/export":
+    if text == "/exportbackup":
         messenger.send_document(
             export.export_filename(now),
-            export.export_json(conn, now=now),
-            caption="Your diary export (meals, symptoms, and saved foods).",
+            export.export_json(
+                conn, diet_path=diet_path, observations_path=observations_path, now=now,
+            ),
+            caption=(
+                "Your full backup: diary, body metrics, targets, weights, saved foods, "
+                "weekly reviews, and your profile and memory files."
+            ),
+        )
+        return
+    if text == "/exportdeepdive":
+        messenger.send_document(
+            deepdive.deepdive_filename(now),
+            deepdive.build_markdown(
+                conn, diet_path=diet_path, observations_path=observations_path, now=now,
+            ),
+            caption=(
+                f"Your last {deepdive.WINDOW_DAYS} days, written up for a large model — "
+                "upload it and ask for the analysis you want."
+            ),
+        )
+        messenger.send(
+            "⚠️ That file is the most sensitive thing I hold: your body metrics, medical "
+            "conditions, family history, everything you've eaten and every symptom — all "
+            "in one document. Uploading it sends that to whoever runs the model. Worth a "
+            "thought before it leaves your phone."
         )
         return
 
