@@ -67,6 +67,30 @@ def test_deepdive_window_excludes_older_entries(conn):
     assert "window" in md.split("\n")[2]           # the window is stated up front
 
 
+def test_deepdive_window_spans_months_across_mixed_timestamp_formats(conn):
+    """The window filter is a string comparison, and `occurred_at` is not written in
+    one consistent shape — older rows carry a UTC offset, newer ones are naive local,
+    and some carry a non-UTC offset. Every one of them must fall inside a 90-day
+    window that spans several months."""
+    targets.write_metrics(conn, dict(FULL_METRICS))
+    now = datetime(2026, 8, 24, 15, 30)
+    inside = [
+        ("2026-06-23T09:00:00+00:00", "june aware utc"),
+        ("2026-07-06T15:07:00", "july naive"),
+        ("2026-07-28T12:00:00+01:00", "late july aware"),
+        ("2026-08-24T08:00:00+01:00", "today"),
+    ]
+    for when, name in inside:
+        _save_meal(conn, [_item(name, calories=300)], when, raw_text=f"ate {name}")
+    _save_meal(conn, [_item("march meal", calories=300)], "2026-03-01T08:00:00+00:00")
+
+    md = deepdive.build_markdown(conn, now=now)
+    for _, name in inside:
+        assert name in md
+    assert "march meal" not in md
+    assert "2026-05-26 → 2026-08-24" in md
+
+
 def test_deepdive_flags_rows_whose_macros_cannot_make_their_calories(conn):
     targets.write_metrics(conn, dict(FULL_METRICS))
     _save_meal(conn, [

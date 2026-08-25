@@ -243,18 +243,35 @@ def _targets_section(conn: sqlite3.Connection) -> list[str]:
 
 
 def _weight(conn: sqlite3.Connection, now: datetime) -> list[str]:
-    # Weight is deliberately NOT limited to the window: the trend is the one objective
-    # outcome in this file, and it only becomes readable over months.
+    # Weight and waist are deliberately NOT limited to the window: they are the only
+    # objective outcomes in this file, and only become readable over months.
     history = targets.weight_history(conn, "0000-01-01")
-    lines = ["## Weight", ""]
+    lines = ["## Weight and waist", ""]
     if not history:
         lines += ["No weights logged — calorie conclusions here cannot be verified "
                   "against an outcome.", ""]
-        return lines
+    else:
+        lines += [
+            targets.format_weight_trend(conn, now=now, days=3650), "",
+            "| Date | kg |", "|---|---|",
+        ]
+        lines += [f"| {_day(h['occurred_at'])} | {_num(h['weight_kg'], 1)} |" for h in history]
+        lines.append("")
 
-    lines += [targets.format_weight_trend(conn, now=now, days=3650), "", "| Date | kg |", "|---|---|"]
-    lines += [f"| {_day(h['occurred_at'])} | {_num(h['weight_kg'], 1)} |" for h in history]
-    lines.append("")
+    waist = targets.waist_history(conn)
+    if waist:
+        lines += [
+            targets.format_waist_trend(conn, now=now, days=3650), "",
+            "| Date | waist cm |", "|---|---|",
+        ]
+        lines += [f"| {_day(w['occurred_at'])} | {_num(w['waist_cm'], 1)} |" for w in waist]
+        lines.append("")
+    else:
+        lines += [
+            "No waist measurements logged. Weight alone cannot separate fat loss from "
+            "muscle loss, so any question about body composition here is unanswerable.",
+            "",
+        ]
     return lines
 
 

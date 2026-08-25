@@ -32,10 +32,17 @@ class ToolContext:
 
 TOOLS_DOC = (
     "Tools (call exactly ONE per turn, via `tool` + `args_json`):\n"
-    "- get_intake_summary(weeks:int=4) -> this week's per-day intake table, a "
-    "week-over-week comparison across recent weeks (avg kcal/protein/fibre per logged "
-    "day, with this-week-vs-last-week deltas), the working-target check, and late-evening "
-    "meals — all computed in SQL. USE THESE NUMBERS — never sum meal items yourself\n"
+    "- get_intake_summary(weeks:int=12) -> this week's per-day intake table, a "
+    "week-over-week comparison across the whole window (avg kcal AND protein/fat/carbs/"
+    "sugar/fibre per logged day, with deltas), the working-target check, when each "
+    "nutrient started being tracked, late-evening meals and what share of energy lands "
+    "after 20:00 — all computed in SQL. USE THESE NUMBERS — never sum meal items yourself\n"
+    "- get_food_frequency(days:int=90) -> how often each food appears (times, and on how "
+    "many of the logged days), with the day count as denominator — the basis for any "
+    "'you rarely eat X' claim\n"
+    "- compare_symptom_days(symptom:str, days:int=90) -> days with that symptom vs days "
+    "without, compared on calories, evening calories, fibre and sugar, with the day count "
+    "so you can judge whether the difference is worth anything\n"
     "- query_diary(since_days:int=28, kind:'all'|'meals'|'symptoms'|'exercises'='all') -> recent diary\n"
     "- read_diet() -> the user's profile (diet.md)\n"
     "- read_observations() -> your own prior notes (observations.md)\n"
@@ -44,7 +51,8 @@ TOOLS_DOC = (
     "- get_targets() -> the formula ESTIMATE plus the current calibrated working target\n"
     "- set_targets(calories:int, protein_min_g:int, protein_max_g:int, rationale:str) -> "
     "persist a new calibrated working target (clamped to safe bounds; rationale required)\n"
-    "- get_weight_trend(days:int=56) -> the user's logged weight trend over the window\n"
+    "- get_weight_trend(days:int=56) -> the user's logged weight AND waist trends over "
+    "the window (waist is what separates fat loss from muscle loss when weight moves)\n"
 )
 
 
@@ -117,7 +125,7 @@ def _intake_summary(ctx: ToolContext, args: dict[str, Any]) -> str:
     comparison across the last `weeks` weeks, and the working-target check. Everything
     is computed in code so the agent's energy/macro claims (and the week-over-week
     deltas) rest on real arithmetic, not the model summing dozens of items itself."""
-    weeks = int(args.get("weeks", 4))
+    weeks = int(args.get("weeks", 12))
 
     since_week = (ctx.now - timedelta(days=7)).isoformat()
     day_rows = diary.daily_totals(ctx.conn, since_week)
@@ -129,7 +137,9 @@ def _intake_summary(ctx: ToolContext, args: dict[str, Any]) -> str:
         for r in day_rows:
             lines.append(
                 f"- {r['day']}: {r['meals']} meal(s), ~{round(r['calories'])} kcal, "
-                f"{round(r['protein_g'])}g protein, {round(r['fiber_g'])}g fibre"
+                f"{round(r['protein_g'])}g protein, {round(r['fat_g'])}g fat, "
+                f"{round(r['carbs_g'])}g carbs, {round(r['sugar_g'])}g sugar, "
+                f"{round(r['fiber_g'])}g fibre"
             )
         lines.append(
             f"Days logged this week: {len(day_rows)} of 7. (Judge whether sparse days "
@@ -142,13 +152,18 @@ def _intake_summary(ctx: ToolContext, args: dict[str, Any]) -> str:
     # Week-over-week: averages per LOGGED day, most recent first, with the delta from
     # this week to last week spelled out so trend — not a single week — drives the read.
     wk = diary.weekly_totals(ctx.conn, ctx.now, weeks=weeks)
-    lines.append("\nWeek-over-week (avg per logged day, most recent first):")
+    lines.append(
+        f"\nWeek-over-week over {weeks} weeks (avg per logged day, most recent first). "
+        "Read DOWN this list for slow trends — a macro that climbs or falls steadily "
+        "across many weeks is invisible in any single week's numbers:"
+    )
     for w in wk:
         if w["days_logged"]:
             lines.append(
                 f"- {_week_label(w['weeks_ago'])}: ~{round(w['avg_calories'])} kcal, "
-                f"{round(w['avg_protein_g'])}g protein, {round(w['avg_fiber_g'])}g fibre "
-                f"({w['days_logged']} day(s) logged)"
+                f"{round(w['avg_protein_g'])}g protein, {round(w['avg_fat_g'])}g fat, "
+                f"{round(w['avg_carbs_g'])}g carbs, {round(w['avg_sugar_g'])}g sugar, "
+                f"{round(w['avg_fiber_g'])}g fibre ({w['days_logged']} day(s) logged)"
             )
         else:
             lines.append(f"- {_week_label(w['weeks_ago'])}: nothing logged")
@@ -160,7 +175,30 @@ def _intake_summary(ctx: ToolContext, args: dict[str, Any]) -> str:
         lines.append(
             f"This week vs last week: {d_cal:+.0f} kcal ({pct:+d}%), "
             f"{this_wk['avg_protein_g'] - last_wk['avg_protein_g']:+.0f}g protein, "
+            f"{this_wk['avg_sugar_g'] - last_wk['avg_sugar_g']:+.0f}g sugar, "
             f"{this_wk['avg_fiber_g'] - last_wk['avg_fiber_g']:+.0f}g fibre."
+        )
+
+    # When a nutrient started being recorded. Averaging across that boundary silently
+    # understates it, and the agent has no way to know where the data begins.
+    starts = diary.tracking_start_dates(ctx.conn)
+    late_starts = {
+        macro: day for macro, day in starts.items()
+        if day and day > (ctx.now - timedelta(days=weeks * 7)).date().isoformat()
+    }
+    if late_starts:
+        detail = ", ".join(f"{macro.replace('_g', '')} from {day}" for macro, day in late_starts.items())
+        lines.append(
+            f"\nTracking began mid-window for: {detail}. Entries before those dates carry "
+            "no value for that nutrient, so any average spanning them UNDERSTATES it — "
+            "judge those nutrients only from weeks after they start."
+        )
+    never = [macro.replace("_g", "") for macro, day in starts.items() if day is None]
+    if never:
+        lines.append(
+            f"\nNEVER RECORDED in any entry: {', '.join(never)}. The zeros above are "
+            "absence of data, not measured zeros — say the diary can't answer for these "
+            "rather than reporting a shortfall the user never had."
         )
 
     target = targets.working_target(ctx.conn)
@@ -178,7 +216,122 @@ def _intake_summary(ctx: ToolContext, args: dict[str, Any]) -> str:
         "\nMeals eaten at/after 20:00 this week (reflux window): "
         + (", ".join(late) if late else "none")
     )
+    share = diary.evening_calorie_share(ctx.conn, (ctx.now - timedelta(days=weeks * 7)).isoformat())
+    if share["total_calories"]:
+        lines.append(
+            f"Across the whole {weeks}-week window, {round(share['late_share'] * 100)}% of "
+            f"logged energy was eaten at/after {share['hour']}:00 "
+            f"(~{round(share['late_calories'])} of {round(share['total_calories'])} kcal). "
+            "How MUCH lands late matters more than whether it happened."
+        )
     return "\n".join(lines)
+
+
+def format_weekly_numbers(
+    conn: sqlite3.Connection, now: datetime, *, weeks: int = 12
+) -> str:
+    """The week-by-week figures, formatted for the app to write into observations.md.
+
+    Same arithmetic the agent reads through get_intake_summary, but written by the app
+    so the numbers in its memory are never a transcription. See
+    `observations.write_numbers_block` for why that matters.
+    """
+    lines = [
+        "## Verified weekly numbers (written by the app, not the agent)",
+        "",
+        f"Averages per LOGGED day, most recent week first — as of {now:%Y-%m-%d}.",
+        "",
+        "| Week | Days logged | kcal | Protein | Fat | Carbs | Sugar | Fibre |",
+        "|---|---|---|---|---|---|---|---|",
+    ]
+    for w in diary.weekly_totals(conn, now, weeks=weeks):
+        if not w["days_logged"]:
+            continue
+        lines.append(
+            f"| {_week_label(w['weeks_ago'])} | {w['days_logged']} | "
+            f"{round(w['avg_calories'])} | {round(w['avg_protein_g'])} | "
+            f"{round(w['avg_fat_g'])} | {round(w['avg_carbs_g'])} | "
+            f"{round(w['avg_sugar_g'])} | {round(w['avg_fiber_g'])} |"
+        )
+    lines += [
+        "",
+        "These figures are recomputed from the diary every run. If your prose above "
+        "disagrees with this table, the table is right.",
+    ]
+    return "\n".join(lines)
+
+
+def verified_values(conn: sqlite3.Connection, now: datetime, *, weeks: int = 12) -> set[int]:
+    """Every calorie figure the diary actually supports: per-day totals and per-week
+    averages. Used to check the agent's report against arithmetic it can't fudge."""
+    since = (now - timedelta(days=weeks * 7)).isoformat()
+    values = {round(row["calories"]) for row in diary.daily_totals(conn, since)}
+    values |= {
+        round(w["avg_calories"]) for w in diary.weekly_totals(conn, now, weeks=weeks)
+        if w["days_logged"]
+    }
+    target = targets.working_target(conn)
+    if target is not None:
+        values.add(int(target["calories"]))
+    return values
+
+
+def _food_frequency(ctx: ToolContext, args: dict[str, Any]) -> str:
+    """How often each food actually appears, with the denominator alongside — the basis
+    for any 'you rarely eat X' claim."""
+    days = int(args.get("days", 90))
+    since = (ctx.now - timedelta(days=days)).isoformat()
+    rows = diary.food_frequency(ctx.conn, since)
+    logged = diary.logged_day_count(ctx.conn, since)
+    if not rows:
+        return f"No meals logged in the last {days} days."
+
+    lines = [
+        f"Food frequency over the last {days} days ({logged} day(s) actually logged — "
+        "that is the denominator for every claim below):",
+    ]
+    for r in rows:
+        lines.append(
+            f"- {r['name']}: {r['times']}x on {r['days']} of {logged} logged day(s), "
+            f"~{round(r['calories'])} kcal total"
+        )
+    lines.append(
+        "Absence is evidence too: a food that never appears is a gap you can name, but "
+        "only within what was logged."
+    )
+    return "\n".join(lines)
+
+
+def _symptom_patterns(ctx: ToolContext, args: dict[str, Any]) -> str:
+    """Days with a symptom vs days without, on the numbers that could plausibly explain
+    it. Computed here so the comparison is real; whether it MEANS anything is judgement."""
+    symptom = str(args.get("symptom", "")).strip()
+    if not symptom:
+        return "ERROR: name the symptom to compare (e.g. 'bloating')."
+    days = int(args.get("days", 90))
+    since = (ctx.now - timedelta(days=days)).isoformat()
+    c = diary.symptom_day_comparison(ctx.conn, symptom, since)
+    with_s, without = c["with_symptom"], c["without"]
+
+    if not with_s["days"]:
+        return f"No days with '{symptom}' logged in the last {days} days."
+
+    def row(label: str, group: dict[str, Any]) -> str:
+        return (
+            f"- {label} ({group['days']} day(s)): ~{round(group['calories'])} kcal, "
+            f"~{round(group['evening_calories'])} kcal after 20:00, "
+            f"{round(group['fiber_g'])}g fibre, {round(group['sugar_g'])}g sugar"
+        )
+
+    return "\n".join([
+        f"Days WITH '{symptom}' vs days without, last {days} days:",
+        row(f"with {symptom}", with_s),
+        row("without", without),
+        "",
+        f"n = {with_s['days']} symptom day(s). With a handful of days, a difference of "
+        "this size is a hypothesis, not a finding — say so, and give the size of the "
+        "difference rather than implying a link.",
+    ])
 
 
 def _write_observations(ctx: ToolContext, args: dict[str, Any]) -> str:
@@ -195,6 +348,8 @@ def build_dispatch(ctx: ToolContext) -> dict[str, Callable[[dict[str, Any]], str
     """Return the agent's toolbox: tool name -> function(args) -> result string."""
     return {
         "get_intake_summary": lambda a: _intake_summary(ctx, a),
+        "get_food_frequency": lambda a: _food_frequency(ctx, a),
+        "compare_symptom_days": lambda a: _symptom_patterns(ctx, a),
         "query_diary": lambda a: _query_diary(ctx, a),
         "read_diet": lambda a: diet_memory.read_diet(ctx.diet_path) or "(empty)",
         "read_observations": lambda a: observations.read(ctx.observations_path) or "(empty)",
@@ -209,7 +364,11 @@ def build_dispatch(ctx: ToolContext) -> dict[str, Callable[[dict[str, Any]], str
             rationale=a.get("rationale", ""),
             now=ctx.now,
         ),
-        "get_weight_trend": lambda a: targets.format_weight_trend(
-            ctx.conn, now=ctx.now, days=int(a.get("days", 56))
+        # Weight and waist together: the scale alone can't tell fat loss from muscle
+        # loss, which is exactly the question the user keeps asking.
+        "get_weight_trend": lambda a: (
+            targets.format_weight_trend(ctx.conn, now=ctx.now, days=int(a.get("days", 56)))
+            + "\n"
+            + targets.format_waist_trend(ctx.conn, now=ctx.now, days=int(a.get("days", 56)))
         ),
     }

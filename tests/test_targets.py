@@ -127,3 +127,33 @@ def test_single_weight_reports_its_age(conn):
     _log(conn, now - timedelta(days=9), 82.0)
     out = targets.format_weight_trend(conn, now=now)
     assert "9d ago" in out and "Not enough for a trend" in out
+
+
+# --- waist (logged alongside weight; nothing computes from it) ---
+
+def test_waist_trend_needs_two_measurements(conn):
+    from datetime import datetime, timedelta
+
+    now = datetime(2026, 8, 24, 9, 0)
+    assert "No waist measurements" in targets.format_waist_trend(conn, now=now)
+
+    targets.add_waist(conn, 86.0, now=now - timedelta(days=30))
+    assert "one measurement" in targets.format_waist_trend(conn, now=now)
+
+    targets.add_waist(conn, 84.0, now=now)
+    trend = targets.format_waist_trend(conn, now=now)
+    assert "86cm → 84cm" in trend
+    assert "-2.0cm" in trend and "down" in trend
+    assert len(targets.waist_history(conn)) == 2
+
+
+def test_waist_is_kept_out_of_the_calorie_formula(conn):
+    """Waist answers a question weight can't, but nothing computes from it — a target
+    must not silently move because a tape measure did."""
+    from datetime import datetime
+
+    targets.write_metrics(conn, dict(FULL))
+    before = targets.compute(targets.read_metrics(conn))
+    targets.add_waist(conn, 84.0, now=datetime(2026, 8, 24, 9, 0))
+    assert targets.compute(targets.read_metrics(conn)) == before
+    assert "waist" not in str(targets.read_metrics(conn)).lower()

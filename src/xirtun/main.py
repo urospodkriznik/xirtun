@@ -57,6 +57,7 @@ COMMANDS = [
     ("delmeal", "Remove a saved meal"),
     ("target", "Your daily calorie & protein target"),
     ("addweight", "Update your weight"),
+    ("addwaist", "Log your waist measurement"),
     ("setactivity", "Update your activity level"),
     ("exportbackup", "Download everything as a JSON backup"),
     ("exportdeepdive", "Download a write-up for a bigger model"),

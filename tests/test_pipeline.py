@@ -4,7 +4,7 @@ Meals and symptoms share the same shape; the symptom tests mirror the meal ones.
 """
 
 import json
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from xirtun.llm.base import LLMResponse
 from xirtun.llm.fake import FakeLLM
@@ -42,6 +42,52 @@ def test_structure_meal_returns_meals():
     llm = FakeLLM([LLMResponse(data=data)])
     out = structure_meal(llm, "a banana")
     assert out["meals"][0]["items"][0]["name"] == "banana"
+
+
+def test_structure_meal_retries_an_arithmetically_impossible_estimate():
+    """A 240g falafel logged as 240g of FAT is a portion size in the wrong field. It
+    reads as a plausible meal forever after, while skewing every average — so it gets
+    one corrective retry before it is stored, not an explanation months later."""
+    bad = {"needs_clarification": False, "meals": [_meal([
+        {"name": "falafel", "quantity_g": 240, "calories": 600,
+         "protein_g": 48, "fat_g": 240, "carbs_g": 120},
+    ])]}
+    good = {"needs_clarification": False, "meals": [_meal([
+        {"name": "falafel", "quantity_g": 240, "calories": 600,
+         "protein_g": 30, "fat_g": 30, "carbs_g": 60},
+    ])]}
+    llm = FakeLLM([LLMResponse(data=bad), LLMResponse(data=good)])
+
+    out = structure_meal(llm, "falafel plate")
+
+    assert out["meals"][0]["items"][0]["fat_g"] == 30
+    assert len(llm.calls) == 2
+    assert "arithmetically impossible" in llm.calls[1]["messages"][-1]["content"]
+
+
+def test_structure_meal_keeps_the_estimate_when_the_retry_is_no_better():
+    """One retry, then move on — a user logging a meal shouldn't be blocked because the
+    model can't get its arithmetic straight."""
+    bad = {"needs_clarification": False, "meals": [_meal([
+        {"name": "falafel", "calories": 600, "protein_g": 48, "fat_g": 240, "carbs_g": 120},
+    ])]}
+    llm = FakeLLM([LLMResponse(data=bad), LLMResponse(data=bad)])
+
+    out = structure_meal(llm, "falafel plate")
+
+    assert out["meals"][0]["items"][0]["fat_g"] == 240   # stored anyway
+    assert len(llm.calls) == 2                           # but only one retry
+
+
+def test_structure_meal_does_not_retry_a_plausible_estimate():
+    data = {"needs_clarification": False, "meals": [_meal([
+        {"name": "porridge", "calories": 400, "protein_g": 12, "fat_g": 8, "carbs_g": 70},
+    ])]}
+    llm = FakeLLM([LLMResponse(data=data)])
+
+    structure_meal(llm, "porridge")
+
+    assert len(llm.calls) == 1
 
 
 def test_format_ack_single_and_multiple():
@@ -1009,3 +1055,28 @@ def test_handle_message_other(conn):
     assert messenger.sent
     assert conn.execute("SELECT COUNT(*) AS n FROM meals").fetchone()["n"] == 0
     assert conn.execute("SELECT COUNT(*) AS n FROM symptoms").fetchone()["n"] == 0
+
+
+def test_handle_message_addwaist_logs_and_shows_the_trend(conn):
+    from xirtun import targets
+
+    messenger = FakeMessenger()
+    now = datetime(2026, 8, 24, 9, 0, tzinfo=timezone.utc)
+    targets.add_waist(conn, 86.0, now=now - timedelta(days=30))
+
+    handle_message("/addwaist 84", chat_id="c1", llm=FakeLLM(), conn=conn,
+                   messenger=messenger, now=now)
+
+    assert "84 cm" in messenger.sent[-1]
+    assert "86cm → 84cm" in messenger.sent[-1]          # trend comes back immediately
+    assert len(targets.waist_history(conn)) == 2
+
+
+def test_handle_message_addwaist_prompts_when_bare(conn):
+    messenger = FakeMessenger()
+    handle_message("/addwaist", chat_id="c1", llm=FakeLLM(), conn=conn, messenger=messenger)
+    assert "waist in cm" in messenger.sent[-1]
+
+    handle_message("84.5", chat_id="c1", llm=FakeLLM(), conn=conn, messenger=messenger)
+    from xirtun import targets
+    assert targets.waist_history(conn)[-1]["waist_cm"] == 84.5

@@ -7,8 +7,9 @@ sends anything itself — that's run_weekly.py's job (see test_runs.py).
 """
 
 import json
-from datetime import timezone
+from datetime import datetime, timedelta, timezone
 
+from xirtun.agent.tools import ToolContext, build_dispatch
 from xirtun.agent.weekly import run_weekly
 from xirtun.llm.base import LLMResponse
 from xirtun.llm.fake import FakeLLM
@@ -124,7 +125,8 @@ def test_intake_summary_computes_daily_totals_and_target_comparison(conn, tmp_pa
                       observations_path=tmp_path / "o.md", now=datetime(2026, 7, 8, 17, 0))
     out = build_dispatch(ctx)["get_intake_summary"]({"weeks": 4})
 
-    assert "2026-07-06: 2 meal(s), ~1200 kcal, 70g protein, 12g fibre" in out  # per-day
+    assert "2026-07-06: 2 meal(s), ~1200 kcal, 70g protein" in out            # per-day
+    assert "12g fibre" in out
     assert "This week: ~1200 kcal" in out              # avg per logged day, this week
     assert "1 wk ago: ~2400 kcal" in out               # week-over-week row
     assert "-1200 kcal (-50%)" in out                  # this-week-vs-last delta, in code
@@ -145,3 +147,120 @@ def test_weekly_respects_max_iters(conn, tmp_path):
     assert result.report == ""
     assert result.questions == []
     assert result.incomplete is True
+
+
+def test_intake_summary_carries_every_macro_and_a_long_window(conn, tmp_path):
+    """Regression: the summary once reported only calories/protein/fibre over 4 weeks,
+    so a steadily climbing sugar intake was invisible to an agent explicitly asked to
+    report on sugar — it had no honest way to see it."""
+    from xirtun.storage import diary
+
+    def meal(occurred_at, kcal, sugar):
+        return {"occurred_at": occurred_at, "notes": None, "items": [
+            {"name": "x", "calories": kcal, "protein_g": 40, "fat_g": 30,
+             "carbs_g": 200, "sugar_g": sugar, "fiber_g": 20}]}
+
+    now = datetime(2026, 7, 8, 17, 0)
+    # Sugar climbing across 8 weeks — invisible in any single week.
+    for weeks_ago, sugar in enumerate((90, 80, 70, 60, 50, 40, 30, 20)):
+        day = now - timedelta(days=weeks_ago * 7 + 1)
+        diary.save_meal(conn, "m", meal(day.isoformat(), 2000, sugar))
+
+    ctx = ToolContext(conn=conn, diet_path=tmp_path / "d.md",
+                      observations_path=tmp_path / "o.md", now=now)
+    out = build_dispatch(ctx)["get_intake_summary"]({})
+
+    assert "90g sugar" in out and "20g sugar" in out    # both ends of the trend visible
+    assert "30g fat" in out and "200g carbs" in out
+    assert "7 wks ago" in out                           # 12-week default, not 4
+
+
+def test_intake_summary_reports_when_tracking_started(conn, tmp_path):
+    """Sugar and fibre were added to the schema after logging began. Averaging across
+    that boundary understates them, so the agent is told where the data starts."""
+    from xirtun.storage import diary
+
+    now = datetime(2026, 7, 8, 17, 0)
+    diary.save_meal(conn, "old", {"occurred_at": (now - timedelta(days=40)).isoformat(),
+                                  "notes": None, "items": [{"name": "x", "calories": 500}]})
+    diary.save_meal(conn, "new", {"occurred_at": (now - timedelta(days=2)).isoformat(),
+                                  "notes": None, "items": [
+                                      {"name": "y", "calories": 500, "sugar_g": 20, "fiber_g": 10}]})
+
+    ctx = ToolContext(conn=conn, diet_path=tmp_path / "d.md",
+                      observations_path=tmp_path / "o.md", now=now)
+    out = build_dispatch(ctx)["get_intake_summary"]({})
+    assert "Tracking began mid-window" in out
+    assert "UNDERSTATES" in out
+
+
+def test_food_frequency_counts_days_with_a_denominator(conn, tmp_path):
+    from xirtun.storage import diary
+
+    now = datetime(2026, 7, 8, 17, 0)
+    for days_ago in (1, 3, 5):
+        diary.save_meal(conn, "f", {"occurred_at": (now - timedelta(days=days_ago)).isoformat(),
+                                    "notes": None, "items": [{"name": "Flaxseed", "calories": 60}]})
+    diary.save_meal(conn, "c", {"occurred_at": (now - timedelta(days=2)).isoformat(),
+                                "notes": None, "items": [{"name": "cake", "calories": 400}]})
+
+    ctx = ToolContext(conn=conn, diet_path=tmp_path / "d.md",
+                      observations_path=tmp_path / "o.md", now=now)
+    out = build_dispatch(ctx)["get_food_frequency"]({"days": 30})
+
+    assert "flaxseed: 3x on 3 of 4 logged day(s)" in out    # name normalised, denominator given
+    assert "cake: 1x on 1 of 4" in out
+
+
+def test_compare_symptom_days_puts_the_sample_size_up_front(conn, tmp_path):
+    from xirtun.storage import diary
+
+    now = datetime(2026, 7, 8, 17, 0)
+
+    def day(days_ago, kcal, hour=13):
+        when = (now - timedelta(days=days_ago)).replace(hour=hour)
+        diary.save_meal(conn, "m", {"occurred_at": when.isoformat(), "notes": None,
+                                    "items": [{"name": "x", "calories": kcal, "fiber_g": 30}]})
+        return when
+
+    bloat_day = day(2, 900, hour=21)      # big late meal
+    day(4, 500)
+    day(6, 500)
+    diary.save_symptom(conn, "bloated", {"occurred_at": bloat_day.isoformat(),
+                                         "type": "bloating", "severity": 2, "tags": []})
+
+    ctx = ToolContext(conn=conn, diet_path=tmp_path / "d.md",
+                      observations_path=tmp_path / "o.md", now=now)
+    out = build_dispatch(ctx)["compare_symptom_days"]({"symptom": "bloating", "days": 30})
+
+    assert "with bloating (1 day(s))" in out
+    assert "without (2 day(s))" in out
+    assert "~900 kcal after 20:00" in out
+    assert "n = 1 symptom day(s)" in out                    # sample size, not just a claim
+    assert "hypothesis, not a finding" in out
+
+
+def test_compare_symptom_days_without_the_symptom(conn, tmp_path):
+    ctx = ToolContext(conn=conn, diet_path=tmp_path / "d.md",
+                      observations_path=tmp_path / "o.md", now=datetime(2026, 7, 8, 17, 0))
+    out = build_dispatch(ctx)["compare_symptom_days"]({"symptom": "reflux"})
+    assert "No days with 'reflux'" in out
+
+
+def test_intake_summary_says_when_a_nutrient_was_never_recorded(conn, tmp_path):
+    """A nutrient with no values anywhere sums to 0 every week. Reported bare, that
+    reads as 'ate no fibre for 12 weeks' — a shortfall the user never had."""
+    from xirtun.storage import diary
+
+    now = datetime(2026, 7, 8, 17, 0)
+    diary.save_meal(conn, "m", {"occurred_at": (now - timedelta(days=1)).isoformat(),
+                                "notes": None,
+                                "items": [{"name": "x", "calories": 500, "protein_g": 20}]})
+
+    ctx = ToolContext(conn=conn, diet_path=tmp_path / "d.md",
+                      observations_path=tmp_path / "o.md", now=now)
+    out = build_dispatch(ctx)["get_intake_summary"]({})
+
+    assert "NEVER RECORDED in any entry" in out
+    assert "fiber" in out and "sugar" in out
+    assert "absence of data, not measured zeros" in out

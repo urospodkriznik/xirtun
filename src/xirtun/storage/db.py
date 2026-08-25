@@ -123,6 +123,14 @@ CREATE TABLE IF NOT EXISTS weight_log (
     weight_kg   REAL NOT NULL
 );
 
+-- Waist, logged separately from weight. The scale can't tell fat loss from muscle
+-- loss; a waist measurement answers the question weight alone leaves open.
+CREATE TABLE IF NOT EXISTS waist_log (
+    id          INTEGER PRIMARY KEY,
+    occurred_at TEXT NOT NULL,
+    waist_cm    REAL NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS known_foods (
     id         INTEGER PRIMARY KEY,
     name       TEXT NOT NULL UNIQUE,

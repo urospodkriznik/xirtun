@@ -240,6 +240,12 @@ CREATE TABLE runs (                -- weekly-run idempotency / catch-up
     status      TEXT NOT NULL      -- "running" | "ok" | "error"
 );
 
+CREATE TABLE waist_log (           -- waist measurements, kept apart from `metrics`
+    id          INTEGER PRIMARY KEY,   -- because nothing computes from them: they
+    occurred_at TEXT NOT NULL,         -- answer what the scale can't (fat vs muscle)
+    waist_cm    REAL NOT NULL
+);
+
 CREATE TABLE weekly_reports (      -- every report the agent writes, kept verbatim
     id          INTEGER PRIMARY KEY,
     created_at  TEXT NOT NULL,
@@ -267,6 +273,13 @@ weekly run and future re-processing can re-derive structure if needed.
   ADR-008).
 - `data/observations.md` — agent-authored long-term memory, rewritten/appended
   by the weekly run. Human-readable so the author can correct it.
+  **The numbers in it are not the agent's.** Every run, the app replaces a block
+  delimited by `<!-- app-numbers:start/end -->` with per-week averages computed in
+  SQL. The agent rewrites this file wholesale, which means any figure it keeps is
+  retyped from memory — and a retyped average once drifted 200 kcal and became the
+  following week's premise. The agent writes prose; the app writes the arithmetic.
+  `run_weekly` additionally checks the report's calorie claims against computed
+  values (`agent/verify.py`) and logs any it can't account for.
 
 ## Scheduling
 

@@ -145,6 +145,55 @@ def format_weight_trend(conn: sqlite3.Connection, now: datetime | None = None, d
     )
 
 
+# --- waist (logged alongside weight; not part of any calorie formula) ---
+
+def add_waist(conn: sqlite3.Connection, waist_cm: float, now: datetime | None = None) -> None:
+    """Record a waist measurement. Kept apart from `metrics` because nothing computes
+    from it — it exists to answer what the scale cannot: whether weight lost is fat or
+    muscle, and whether a belly is growing while weight falls."""
+    occurred_at = (now or datetime.now().astimezone()).isoformat()
+    conn.execute(
+        "INSERT INTO waist_log (occurred_at, waist_cm) VALUES (?, ?)",
+        (occurred_at, waist_cm),
+    )
+    conn.commit()
+
+
+def waist_history(conn: sqlite3.Connection, since_iso: str = "0000-01-01") -> list[dict[str, Any]]:
+    """Logged waist measurements at or after ``since_iso``, oldest first."""
+    rows = conn.execute(
+        "SELECT occurred_at, waist_cm FROM waist_log WHERE occurred_at >= ? "
+        "ORDER BY occurred_at ASC",
+        (since_iso,),
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def format_waist_trend(conn: sqlite3.Connection, now: datetime | None = None, days: int = 90) -> str:
+    """Human-readable waist trend, or an explanation of why there isn't one yet."""
+    now = now or datetime.now().astimezone()
+    history = waist_history(conn, (now - timedelta(days=days)).isoformat())
+    if not history:
+        return (
+            f"No waist measurements in the last {days} days. Weight alone can't "
+            "separate fat loss from muscle loss — /addwaist gives that reading."
+        )
+    if len(history) == 1:
+        h = history[0]
+        return f"Waist: {h['waist_cm']:g}cm on {h['occurred_at'][:10]} (one measurement — no trend yet)."
+
+    first, last = history[0], history[-1]
+    delta = last["waist_cm"] - first["waist_cm"]
+    direction = "down" if delta < 0 else ("up" if delta > 0 else "unchanged")
+    return (
+        f"Waist trend ({len(history)} measurements): {first['waist_cm']:g}cm → "
+        f"{last['waist_cm']:g}cm ({delta:+.1f}cm, {direction}) between "
+        f"{first['occurred_at'][:10]} and {last['occurred_at'][:10]}. "
+        "Read it against the weight trend: waist falling while weight holds means "
+        "body composition changing; weight falling while waist holds is the reverse."
+    )
+
+
 def age_from(metrics: dict[str, Any], today: date | None = None) -> int | None:
     """Current age from year (and optional month) of birth."""
     birth_year = metrics.get("birth_year")

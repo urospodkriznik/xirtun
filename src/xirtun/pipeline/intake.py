@@ -72,6 +72,10 @@ INPUT_COMMANDS = {
     "/delmeal": "🗑️ Which saved meal should I remove? Send its name — or /cancel.",
     "/checkfood": "🔎 Which food should I look up? Send its name — or /cancel.",
     "/addweight": "⚖️ What's your weight in kg? e.g. '75' — or /cancel.",
+    "/addwaist": (
+        "📏 What's your waist in cm? e.g. '84'. Measure at the navel, morning, "
+        "before eating — or /cancel."
+    ),
     "/setactivity": (
         "🏃 Describe your activity level, e.g. 'I train hard 3 days and walk the rest' "
         "— or /cancel."
@@ -117,6 +121,7 @@ HELP_TEXT = (
     "/delmeal <name> — remove a saved meal\n"
     "/target — your daily calorie & protein target\n"
     "/addweight <kg> — update your weight\n"
+    "/addwaist <cm> — log your waist measurement\n"
     "/setactivity <description> — update your activity level in plain language\n"
     "/exportbackup — download everything as a JSON backup\n"
     "/exportdeepdive — download a Markdown write-up to feed a bigger model\n"
@@ -299,6 +304,8 @@ def handle_message(
             targets.format_all_targets(conn)
             + "\n\n"
             + targets.format_weight_trend(conn, now=now)
+            + "\n"
+            + targets.format_waist_trend(conn, now=now)
         )
         return
     if text == "/exportbackup":
@@ -466,6 +473,8 @@ def _run_input_command(
         messenger.send(_food_lookup(conn, payload))
     elif cmd == "/addweight":
         _run_addweight(payload, conn=conn, messenger=messenger, now=now)
+    elif cmd == "/addwaist":
+        _run_addwaist(payload, conn=conn, messenger=messenger, now=now)
     elif cmd == "/setactivity":
         _update_activity(payload, llm=llm, conn=conn, messenger=messenger, diet_path=diet_path)
 
@@ -542,6 +551,20 @@ def _run_addweight(
         return
     targets.update_weight(conn, kg, now=now)
     messenger.send(f"Updated your weight to {kg:g} kg.")
+
+
+def _run_addwaist(
+    payload: str, *, conn: sqlite3.Connection, messenger: Messenger, now: datetime | None,
+) -> None:
+    try:
+        cm = float(payload.split()[0].replace(",", "."))
+    except (IndexError, ValueError):
+        messenger.send("Usage: /addwaist 84")
+        return
+    targets.add_waist(conn, cm, now=now)
+    messenger.send(
+        f"Logged your waist at {cm:g} cm.\n{targets.format_waist_trend(conn, now=now)}"
+    )
 
 
 _LOG_INTENTS = {"meal", "symptom", "exercise", "food", "shopping"}

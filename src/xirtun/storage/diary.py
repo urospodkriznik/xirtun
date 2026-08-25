@@ -133,15 +133,19 @@ def meals_since(conn: sqlite3.Connection, since_iso: str) -> list[dict[str, Any]
     return result
 
 
+# Every macro the diary tracks. The aggregates below carry all of them: an agent that
+# is told to report on sugar but handed only calories/protein/fibre cannot see a sugar
+# trend at all, and is left with no honest way to discuss one.
+AGGREGATE_MACROS = ("calories", "protein_g", "fat_g", "carbs_g", "sugar_g", "fiber_g")
+
+
 def daily_totals(conn: sqlite3.Connection, since_iso: str) -> list[dict[str, Any]]:
-    """Per-day intake totals (meal count, kcal, protein, fibre) on/after `since_iso`,
-    oldest first. Computed in SQL so the weekly agent reads real arithmetic instead of
-    summing dozens of items itself — LLMs are unreliable at exactly that."""
+    """Per-day intake totals (meal count and every macro) on/after `since_iso`, oldest
+    first. Computed in SQL so the weekly agent reads real arithmetic instead of summing
+    dozens of items itself — LLMs are unreliable at exactly that."""
+    sums = ", ".join(f"COALESCE(SUM(i.{macro}), 0) AS {macro}" for macro in AGGREGATE_MACROS)
     rows = conn.execute(
-        "SELECT date(m.occurred_at) AS day, COUNT(DISTINCT m.id) AS meals, "
-        "COALESCE(SUM(i.calories), 0) AS calories, "
-        "COALESCE(SUM(i.protein_g), 0) AS protein_g, "
-        "COALESCE(SUM(i.fiber_g), 0) AS fiber_g "
+        f"SELECT date(m.occurred_at) AS day, COUNT(DISTINCT m.id) AS meals, {sums} "
         "FROM meals m JOIN meal_items i ON i.meal_id = m.id "
         "WHERE m.occurred_at >= ? GROUP BY day ORDER BY day",
         (since_iso,),
@@ -149,7 +153,7 @@ def daily_totals(conn: sqlite3.Connection, since_iso: str) -> list[dict[str, Any
     return [dict(r) for r in rows]
 
 
-def weekly_totals(conn: sqlite3.Connection, now: datetime, *, weeks: int = 4) -> list[dict[str, Any]]:
+def weekly_totals(conn: sqlite3.Connection, now: datetime, *, weeks: int = 12) -> list[dict[str, Any]]:
     """Per-week intake aggregates for the last `weeks` weeks, most recent first.
 
     Week 0 is the trailing 7 days (now-7d .. now), week 1 the 7 days before that, etc.
@@ -163,23 +167,19 @@ def weekly_totals(conn: sqlite3.Connection, now: datetime, *, weeks: int = 4) ->
         idx = (now.date() - date.fromisoformat(row["day"])).days // 7
         if not 0 <= idx < weeks:
             continue
-        b = buckets.setdefault(idx, {"days_logged": 0, "calories": 0.0, "protein_g": 0.0, "fiber_g": 0.0})
+        b = buckets.setdefault(idx, {"days_logged": 0.0, **{m: 0.0 for m in AGGREGATE_MACROS}})
         b["days_logged"] += 1
-        b["calories"] += row["calories"]
-        b["protein_g"] += row["protein_g"]
-        b["fiber_g"] += row["fiber_g"]
+        for macro in AGGREGATE_MACROS:
+            b[macro] += row[macro]
 
     result = []
     for idx in range(weeks):
         b = buckets.get(idx)
-        d = b["days_logged"] if b else 0
-        result.append({
-            "weeks_ago": idx,
-            "days_logged": d,
-            "avg_calories": (b["calories"] / d) if d else 0.0,
-            "avg_protein_g": (b["protein_g"] / d) if d else 0.0,
-            "avg_fiber_g": (b["fiber_g"] / d) if d else 0.0,
-        })
+        d = int(b["days_logged"]) if b else 0
+        week: dict[str, Any] = {"weeks_ago": idx, "days_logged": d}
+        for macro in AGGREGATE_MACROS:
+            week[f"avg_{macro}"] = (b[macro] / d) if b and d else 0.0
+        result.append(week)
     return result
 
 
@@ -193,6 +193,118 @@ def late_meal_days(conn: sqlite3.Connection, since_iso: str, *, hour: int = 20) 
         (since_iso, hour),
     ).fetchall()
     return [r["occurred_at"][:16].replace("T", " ") for r in rows]
+
+
+def evening_calorie_share(conn: sqlite3.Connection, since_iso: str, *, hour: int = 20) -> dict[str, Any]:
+    """How much of the day's energy arrives at/after `hour`, as a share of the total.
+
+    `late_meal_days` says late eating happened; this says how much it matters — with a
+    hiatal hernia the difference between 5% and 27% of intake after 20:00 is the whole
+    argument."""
+    row = conn.execute(
+        "SELECT COALESCE(SUM(i.calories), 0) AS total, "
+        "COALESCE(SUM(CASE WHEN CAST(strftime('%H', m.occurred_at) AS INTEGER) >= ? "
+        "               THEN i.calories ELSE 0 END), 0) AS late "
+        "FROM meals m JOIN meal_items i ON i.meal_id = m.id WHERE m.occurred_at >= ?",
+        (hour, since_iso),
+    ).fetchone()
+    total, late = row["total"], row["late"]
+    return {
+        "total_calories": total,
+        "late_calories": late,
+        "late_share": (late / total) if total else 0.0,
+        "hour": hour,
+    }
+
+
+def food_frequency(
+    conn: sqlite3.Connection, since_iso: str, *, limit: int = 40
+) -> list[dict[str, Any]]:
+    """How often each food appears: times eaten, distinct days, and total energy.
+
+    Turns "your omega-3 looks low" into "flaxseed appears on 7 of 63 logged days" —
+    a countable claim. Counting by eye over hundreds of items is exactly the arithmetic
+    an LLM gets wrong."""
+    rows = conn.execute(
+        "SELECT lower(trim(i.name)) AS name, COUNT(*) AS times, "
+        "COUNT(DISTINCT date(m.occurred_at)) AS days, "
+        "COALESCE(SUM(i.calories), 0) AS calories "
+        "FROM meals m JOIN meal_items i ON i.meal_id = m.id "
+        "WHERE m.occurred_at >= ? GROUP BY name ORDER BY days DESC, times DESC LIMIT ?",
+        (since_iso, limit),
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def logged_day_count(conn: sqlite3.Connection, since_iso: str) -> int:
+    """Distinct days with at least one meal — the denominator for any frequency claim."""
+    row = conn.execute(
+        "SELECT COUNT(DISTINCT date(occurred_at)) AS n FROM meals WHERE occurred_at >= ?",
+        (since_iso,),
+    ).fetchone()
+    return int(row["n"])
+
+
+def tracking_start_dates(conn: sqlite3.Connection) -> dict[str, str | None]:
+    """The first date each macro carries a real value.
+
+    Sugar and fibre were added to the schema after logging began, so entries before
+    those dates hold no value for them. Averaging across that boundary silently
+    understates both — the agent needs to know where the data actually starts."""
+    starts: dict[str, str | None] = {}
+    for macro in AGGREGATE_MACROS:
+        row = conn.execute(
+            f"SELECT MIN(date(m.occurred_at)) AS first_day FROM meals m "
+            f"JOIN meal_items i ON i.meal_id = m.id WHERE i.{macro} IS NOT NULL"
+        ).fetchone()
+        starts[macro] = row["first_day"]
+    return starts
+
+
+def symptom_day_comparison(
+    conn: sqlite3.Connection, symptom_type: str, since_iso: str, *, evening_hour: int = 20
+) -> dict[str, Any]:
+    """Days carrying a given symptom vs every other logged day, side by side.
+
+    Returns the averages worth comparing (energy, evening energy, fibre, sugar) plus the
+    day counts, so a weak association can be seen for what it is. Whether a difference
+    means anything is a judgement; computing it is not."""
+    rows = conn.execute(
+        "SELECT DISTINCT date(occurred_at) AS day FROM symptoms "
+        "WHERE occurred_at >= ? AND lower(type) LIKE ?",
+        (since_iso, f"%{symptom_type.lower()}%"),
+    ).fetchall()
+    symptom_days = {r["day"] for r in rows}
+
+    evening = conn.execute(
+        "SELECT date(m.occurred_at) AS day, COALESCE(SUM(i.calories), 0) AS late "
+        "FROM meals m JOIN meal_items i ON i.meal_id = m.id "
+        "WHERE m.occurred_at >= ? AND CAST(strftime('%H', m.occurred_at) AS INTEGER) >= ? "
+        "GROUP BY day",
+        (since_iso, evening_hour),
+    ).fetchall()
+    late_by_day = {r["day"]: r["late"] for r in evening}
+
+    groups: dict[str, list[dict[str, float]]] = {"with_symptom": [], "without": []}
+    for row in daily_totals(conn, since_iso):
+        bucket = "with_symptom" if row["day"] in symptom_days else "without"
+        groups[bucket].append({
+            "calories": row["calories"],
+            "evening_calories": late_by_day.get(row["day"], 0.0),
+            "fiber_g": row["fiber_g"],
+            "sugar_g": row["sugar_g"],
+        })
+
+    def summarise(days: list[dict[str, float]]) -> dict[str, Any]:
+        n = len(days)
+        keys = ("calories", "evening_calories", "fiber_g", "sugar_g")
+        return {"days": n, **{k: (sum(d[k] for d in days) / n if n else 0.0) for k in keys}}
+
+    return {
+        "symptom": symptom_type,
+        "with_symptom": summarise(groups["with_symptom"]),
+        "without": summarise(groups["without"]),
+    }
 
 
 def symptoms_since(conn: sqlite3.Connection, since_iso: str) -> list[dict[str, Any]]:

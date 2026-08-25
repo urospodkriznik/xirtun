@@ -90,4 +90,53 @@ def structure_meal(
         {"role": "user", "content": user},
     ]
     response = llm.complete(messages, schema=MealExtraction)
-    return response.data
+    data = response.data
+
+    # A macro estimate that can't produce its own calorie figure is a slip, not a big
+    # meal — most often the portion size written into a macro field (a 240g falafel
+    # logged as 240g of fat). One corrective retry costs a cheap call and stops the row
+    # from skewing every average that follows; if the retry is no better we keep what we
+    # have rather than block the user's log on it.
+    impossible = impossible_items(data)
+    if impossible:
+        retry = llm.complete(
+            messages + [{
+                "role": "user",
+                "content": (
+                    "Your estimate is arithmetically impossible for: "
+                    + "; ".join(impossible)
+                    + ". Protein and carbs are 4 kcal per gram and fat is 9, so those "
+                    "macros imply far more energy than the calorie figure you gave. "
+                    "Check whether a portion size ended up in a macro field. Re-estimate "
+                    "the whole message, keeping everything else the same."
+                ),
+            }],
+            schema=MealExtraction,
+        )
+        if retry.data and not impossible_items(retry.data):
+            return retry.data
+    return data
+
+
+def impossible_items(data: dict[str, Any] | None) -> list[str]:
+    """Names of items whose macros imply far more energy than their calorie figure.
+
+    Same test the deep-dive export applies when reading old rows — applied here so the
+    row is questioned before it is stored, rather than explained after the fact.
+    """
+    if not data:
+        return []
+    bad = []
+    for meal in data.get("meals") or []:
+        for item in meal.get("items") or []:
+            stated = item.get("calories")
+            if not stated:
+                continue
+            implied = (
+                (item.get("protein_g") or 0) * 4
+                + (item.get("fat_g") or 0) * 9
+                + (item.get("carbs_g") or 0) * 4
+            )
+            if implied > stated * 1.5 + 100:
+                bad.append(f"{item.get('name')} ({round(stated)} kcal but macros imply {round(implied)})")
+    return bad

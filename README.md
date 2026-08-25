@@ -42,7 +42,8 @@ your data in plain files you own, and talks to no one but you and the model prov
   level, allergies, conditions, family history, diet style, supplements, and goals.
 - Add to it anytime as a **note** — *"I want to gain muscle"*, *"I exercise twice a
   week"*, *"I want more lutein"* — and the weekly review factors it in.
-- Update your **weight** (`/addweight`) or describe your **activity level** in plain words
+- Update your **weight** (`/addweight`), log your **waist** (`/addwaist` — weight alone
+  can't separate fat loss from muscle loss), or describe your **activity level** in plain words
   (`/setactivity I train hard 3 days and walk the rest`); targets recompute automatically.
 - New facts are merged in over time and the old version is snapshotted before each
   rewrite (so nothing is silently lost).
@@ -145,6 +146,7 @@ your data in plain files you own, and talks to no one but you and the model prov
 | `/delmeal <name>` | Remove a saved meal |
 | `/target` | Formula estimate + your calibrated working target (with why), plus your recent weight trend |
 | `/addweight <kg>` | Update your weight (keeps targets current) |
+| `/addwaist <cm>` | Log a waist measurement — what the scale can't tell you |
 | `/setactivity <description>` | Update your activity level in plain language (recomputes targets) |
 | `/weekly` | Run the weekly review right now |
 | `/settimezone <IANA name>` | Set your timezone, e.g. `/settimezone Europe/Ljubljana` — takes effect immediately, no restart |

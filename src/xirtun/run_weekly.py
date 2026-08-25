@@ -16,12 +16,14 @@ import sqlite3
 from datetime import datetime, timedelta, tzinfo
 from pathlib import Path
 
+from xirtun.agent import tools, verify
 from xirtun.agent.weekly import WeeklyResult, run_weekly
 from xirtun.config import Config, load_config
 from xirtun.llm.base import LLMClient
 from xirtun.llm.gemini import GeminiClient
 from xirtun.logging_setup import setup_logging
 from xirtun.messaging.base import Messenger
+from xirtun.memory import observations
 from xirtun.messaging.telegram import TelegramMessenger
 from xirtun.pipeline import weekly_qa
 from xirtun.storage import db, runs, weekly_reports
@@ -96,6 +98,21 @@ def run_weekly_review(
             weekly_reports.save(
                 conn, result.report, manner=manner, questions=result.questions, now=now,
             )
+            suspect = verify.unverified_calorie_figures(
+                result.report, tools.verified_values(conn, now)
+            )
+            if suspect:
+                logger.warning(
+                    "weekly report contains calorie figures the diary doesn't support: %s "
+                    "— the agent computed rather than read them",
+                    suspect,
+                )
+        # The app owns the numbers in the agent's memory, whatever the agent wrote
+        # there: figures it retypes drift, and a drifted figure becomes next week's
+        # premise. Runs even on an incomplete run — the arithmetic is still true.
+        observations.write_numbers_block(
+            observations_path, tools.format_weekly_numbers(conn, now)
+        )
         if result.incomplete:
             # The agent ran out of tool-call turns before it could write the report —
             # some tool calls (e.g. set_targets) may already have taken effect, but

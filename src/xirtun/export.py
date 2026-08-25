@@ -73,6 +73,7 @@ def build_export(
             "calibrated": targets.read_calibrated(conn),
         },
         "weight_log": targets.weight_history(conn, "0000-01-01"),
+        "waist_log": targets.waist_history(conn),
         # --- the diary itself ---
         "meals": diary.all_meals(conn),
         "symptoms": diary.all_symptoms(conn),
