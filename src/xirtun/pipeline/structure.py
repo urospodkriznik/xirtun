@@ -52,8 +52,29 @@ STRUCTURE_SYSTEM = (
     "- Tag each item with likely SENSITIVITY/ALLERGEN markers (dairy, gluten, soy, "
     "egg, nuts, shellfish, nightshade, histamine, caffeine, alcohol, fodmap) plus "
     "notable attributes ('iron-rich', 'fried', 'processed').\n"
-    "Estimates are rough (±20-30% is fine). Ask at most one question at a time. "
-    "Respond using the provided schema."
+    # Measured, not guessed: without these lines the cheap model collapsed stated
+    # multiples back toward one serving — "3 portions of pasta" came out 1.35x "a
+    # portion of pasta" (150g vs 225g). With them the same model scales it exactly 3x
+    # (150g -> 450g), matching the strong model, so this stays a prompt fix rather
+    # than an upgrade to a pricier model on every meal.
+    "QUANTITY IS THE NUMBER THAT MATTERS MOST — get it right before the macros.\n"
+    "- quantity_g is the TOTAL amount eaten of that item, never a per-portion amount.\n"
+    "- When the user states a COUNT of portions/servings/plates/bowls ('two portions', "
+    "'3 portions', 'a double helping'), multiply a single serving by that count. Two "
+    "portions is TWICE one portion; three is THREE TIMES. Never collapse a stated "
+    "multiple back toward a single serving.\n"
+    "- Size words scale further: 'big'/'large' ~1.5x a normal serving, 'very big'/'huge' "
+    "~2x, 'small' ~0.6x. Apply the size word FIRST, then the count.\n"
+    "- Only scale what the count refers to: in 'three portions of pasta with a small "
+    "glass of beer', the beer is still one small glass.\n"
+    "- When the user emphasises the amount ('it really was a lot', 'I was stuffed'), take "
+    "them literally — err on the HIGH side, not the safe middle.\n"
+    "- Sanity-check before answering: would this quantity plausibly leave that person "
+    "full? Restating a big meal as one modest serving is the most damaging error you can "
+    "make here, because it silently understates every total that follows.\n"
+    "Estimates are rough (±20-30% is fine), but that tolerance is for the nutrition of a "
+    "known amount — it is NOT licence to guess the amount itself. Ask at most one "
+    "question at a time. Respond using the provided schema."
 )
 
 

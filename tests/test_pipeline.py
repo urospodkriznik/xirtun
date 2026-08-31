@@ -1080,3 +1080,25 @@ def test_handle_message_addwaist_prompts_when_bare(conn):
     handle_message("84.5", chat_id="c1", llm=FakeLLM(), conn=conn, messenger=messenger)
     from xirtun import targets
     assert targets.waist_history(conn)[-1]["waist_cm"] == 84.5
+
+
+def test_format_ack_shows_the_assumed_quantity():
+    """The ack once showed only kcal and protein, so a dropped portion count ('three
+    portions' logged as one) looked identical to a correct estimate. Showing grams makes
+    it catchable at the moment it happens."""
+    ack = format_ack([_meal([
+        {"name": "pasta", "quantity_g": 450, "calories": 600, "protein_g": 20},
+        {"name": "beer", "calories": 105, "protein_g": 1},          # no quantity known
+    ])])
+    assert "- pasta 450g (~600 kcal" in ack
+    assert "- beer (~105 kcal" in ack                                # omitted, not "0g"
+
+
+def test_structure_prompt_requires_scaling_by_stated_portions():
+    """Measured against the real API: without this rule the cheap model logged "3
+    portions of pasta" as 1.35x "a portion" (150g vs 225g); with it, exactly 3x."""
+    from xirtun.pipeline.structure import STRUCTURE_SYSTEM
+
+    assert "TOTAL amount eaten" in STRUCTURE_SYSTEM
+    assert "Never collapse a stated multiple" in STRUCTURE_SYSTEM
+    assert "the beer is still one small glass" in STRUCTURE_SYSTEM   # scale only what's counted

@@ -160,8 +160,13 @@ def format_ack(meals: list[dict[str, Any]]) -> str:
         for item in meal["items"]:
             for key in all_totals:
                 all_totals[key] += item.get(key) or 0
+            # Show the amount the model assumed. Without it the ack looks reasonable
+            # whatever quantity was used, and a portion count silently dropped on the
+            # way in ("three portions" logged as one) is invisible until it has skewed
+            # weeks of totals — with it, a wrong estimate is one /undo away.
+            quantity = f" {round(item['quantity_g'])}g" if item.get("quantity_g") else ""
             lines.append(
-                f"- {item['name']} (~{round(item.get('calories') or 0)} kcal, "
+                f"- {item['name']}{quantity} (~{round(item.get('calories') or 0)} kcal, "
                 f"{round(item.get('protein_g') or 0)}g protein)"
             )
     time_str = ""
