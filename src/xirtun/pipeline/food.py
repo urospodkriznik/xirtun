@@ -12,7 +12,9 @@ REGISTER_SYSTEM = (
     "Nutrition values are PER 100g unless a different serving is clearly stated — "
     "convert to per-100g if so. Map common abbreviations: 'ch'/'carbs' -> carbohydrate, "
     "'protein(s)' -> protein; 'of which sugars'/'sugars' -> sugar_g; "
-    "'fibre'/'fibra' -> fiber_g. If a package/pack size in "
+    "'fibre'/'fibra' -> fiber_g. For sodium give sodium_mg in MILLIgrams: EU labels "
+    "state 'salt'/'sal'/'sale' in GRAMS, so convert with sodium_mg = salt_g * 400; a "
+    "label already giving sodium in mg is used as-is. If a package/pack size in "
     "grams is mentioned, set package_g. Capture the brand if given. Do not "
     "invent numbers; leave a field null only if it truly isn't provided."
 )

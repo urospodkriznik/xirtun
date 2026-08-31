@@ -19,7 +19,8 @@ your data in plain files you own, and talks to no one but you and the model prov
 
 **Logging (text or voice, in plain language)**
 - **Meals** — *"leftover curry, ~2 cups, and a beer"* becomes structured, timestamped
-  items with estimated calories and macros (protein, fat, carbs incl. sugars, fibre).
+  items with estimated calories and macros (protein, fat, carbs incl. sugars, fibre,
+  sodium).
   Composite foods are broken into ingredients (a sandwich → bread, chicken, mayo,
   lettuce) and tagged with likely allergens/sensitivities (dairy, gluten, soy, egg,
   nuts, FODMAP, …).
@@ -50,7 +51,8 @@ your data in plain files you own, and talks to no one but you and the model prov
 
 **Custom food database**
 - Save the exact label nutrition for foods you buy often: *"save Lidl vegan sausage:
-  200g package, per 100g — 214 kcal, 23g protein, 9g fat, 6g carbs, 4.6g fibre"*.
+  200g package, per 100g — 214 kcal, 23g protein, 9g fat, 6g carbs, 4.6g fibre,
+  1.1g salt"*. EU labels state **salt**; it's converted to sodium automatically.
 - When you later log that food, its macros are computed **exactly** from the label
   (per-100g × grams, or a whole package) instead of being estimated.
 - Duplicate-aware: if a similar food already exists it asks **update / add / cancel**.
@@ -68,7 +70,8 @@ your data in plain files you own, and talks to no one but you and the model prov
   both numbers and the rationale for the current calibration.
 - **`/today`** ends with **what's still left to eat** for every nutrient — calories
   and protein against your working target, fat/carbs/sugar/fibre against guideline
-  amounts derived from it. **`/week`** answers the same question over time: totals,
+  amounts derived from it, and sodium against the WHO limit (an absolute 2000mg,
+  not a share of energy). **`/week`** answers the same question over time: totals,
   then the **daily average and how far it sits from the target** ("~110g protein/day
   of 100–120g → on target"), averaged over the days you actually logged.
 
@@ -96,6 +99,12 @@ your data in plain files you own, and talks to no one but you and the model prov
   - **Scheduled run** (no one's guaranteed to be around): the report sends immediately;
     any questions follow as a separate message, and your reply (whenever it comes) is
     saved as a note for **next** week's analysis rather than reprocessing this one.
+- **Beyond your goals** — the review also surfaces what you *didn't* think to ask
+  about. It derives a **nutrition watchlist** from your whole profile — diet style,
+  conditions, **family history**, age/sex, location, and the supplements you already
+  take — and covers one or two items in depth each week on rotation, so it stays
+  useful instead of reciting the same warnings. Anything clinical is framed as worth
+  a blood test or a doctor's opinion, never a diagnosis.
 - **Weight-log reminder** — on the morning your weekly review is due, if you haven't
   logged a weight in the last 6 days, it nudges you to send `/addweight` so the review can
   judge your calories against the scale instead of just a formula.
@@ -140,7 +149,7 @@ your data in plain files you own, and talks to no one but you and the model prov
 | `/week` | The past 7 days: totals, plus per-day averages and how far each one sits from the target |
 | `/lastmeals` · `/lastsymptoms` · `/lastworkouts` · `/lastnotes` | Your last 3 of each, with times — to check what you've already logged |
 | `/shop` | Suggest a shopping list |
-| `/savefood <name>: <per-100g nutrition>` | Save a food's label (with package size + fibre) |
+| `/savefood <name>: <per-100g nutrition>` | Save a food's label (package size, fibre, salt/sodium) |
 | `/foodlist` | List your saved foods |
 | `/checkfood <name>` | Check whether a food is saved (exact + similar matches) |
 | `/delfood <name>` | Remove a saved food |

@@ -48,6 +48,9 @@ _FAT_PCT = (0.25, 0.35)       # AMDR is 20–35% of energy; the top half is the 
 _CARBS_PCT = (0.45, 0.55)     # AMDR is 45–65% of energy
 _SUGAR_PCT_CAP = 0.10         # WHO: free sugars below 10% of energy
 _FIBER_G_PER_1000_KCAL = 14   # US Dietary Guidelines
+# WHO: under 2000 mg sodium (5 g salt) a day. An absolute limit for adults, not a
+# share of energy — eating more does not license more salt.
+_SODIUM_MAX_MG = 2000
 
 
 def read_metrics(conn: sqlite3.Connection) -> dict[str, Any]:
@@ -323,11 +326,12 @@ def format_all_targets(conn: sqlite3.Connection) -> str:
 
 
 def macro_guidelines(calories: int) -> dict[str, int]:
-    """Guideline fat/carb/sugar/fibre amounts implied by a calorie target.
+    """Guideline fat/carb/sugar/fibre/sodium amounts to go with a calorie target.
 
     Derived, not calibrated — see the constants above. Fat and carbs come back as
-    ranges, sugar as a ceiling, fibre as a floor, because that is how each one is
-    actually recommended.
+    ranges, sugar and sodium as ceilings, fibre as a floor, because that is how each
+    one is actually recommended. Sodium alone is an absolute WHO limit rather than a
+    share of energy, so it does not move with the calorie target.
     """
     return {
         "fat_min_g": round(calories * _FAT_PCT[0] / 9),      # fat: 9 kcal/g
@@ -336,6 +340,7 @@ def macro_guidelines(calories: int) -> dict[str, int]:
         "carbs_max_g": round(calories * _CARBS_PCT[1] / 4),
         "sugar_max_g": round(calories * _SUGAR_PCT_CAP / 4),
         "fiber_min_g": round(calories * _FIBER_G_PER_1000_KCAL / 1000),
+        "sodium_max_mg": _SODIUM_MAX_MG,
     }
 
 

@@ -31,7 +31,7 @@ LATE_HOUR = 20
 # How far back to look for meals that could plausibly explain a symptom.
 SYMPTOM_LOOKBACK_HOURS = 6
 
-_MACROS = ("calories", "protein_g", "fat_g", "carbs_g", "sugar_g", "fiber_g")
+_MACROS = ("calories", "protein_g", "fat_g", "carbs_g", "sugar_g", "fiber_g", "sodium_mg")
 _MACRO_LABELS = (
     ("calories", "kcal"),
     ("protein_g", "Protein"),
@@ -39,6 +39,7 @@ _MACRO_LABELS = (
     ("carbs_g", "Carbs"),
     ("sugar_g", "Sugar"),
     ("fiber_g", "Fibre"),
+    ("sodium_mg", "Sodium"),
 )
 
 
@@ -236,7 +237,8 @@ def _targets_section(conn: sqlite3.Connection) -> list[str]:
             "",
             f"- Fat {g['fat_min_g']}–{g['fat_max_g']}g/day · "
             f"Carbs {g['carbs_min_g']}–{g['carbs_max_g']}g/day · "
-            f"Sugar ≤{g['sugar_max_g']}g/day · Fibre ≥{g['fiber_min_g']}g/day",
+            f"Sugar ≤{g['sugar_max_g']}g/day · Fibre ≥{g['fiber_min_g']}g/day · "
+            f"Sodium ≤{g['sodium_max_mg']}mg/day",
             "",
         ]
     return lines
@@ -287,9 +289,9 @@ def _daily_table(conn: sqlite3.Connection, meals: list[dict[str, Any]]) -> list[
         "One row per logged day. The last column is the gap to the working calorie "
         "target." if target else "One row per logged day.",
         "",
-        "| Date | Day | Meals | kcal | Protein g | Fat g | Carbs g | Sugar g | Fibre g |"
+        "| Date | Day | Meals | kcal | Protein g | Fat g | Carbs g | Sugar g | Fibre g | Sodium mg |"
         + (" vs target |" if target else ""),
-        "|---|---|---|---|---|---|---|---|---|" + ("---|" if target else ""),
+        "|---|---|---|---|---|---|---|---|---|---|" + ("---|" if target else ""),
     ]
     for day in sorted(by_day):
         t = _totals(by_day[day])
@@ -297,7 +299,7 @@ def _daily_table(conn: sqlite3.Connection, meals: list[dict[str, Any]]) -> list[
         row = (
             f"| {day} | {weekday} | {len(by_day[day])} | {_num(t['calories'])} | "
             f"{_num(t['protein_g'])} | {_num(t['fat_g'])} | {_num(t['carbs_g'])} | "
-            f"{_num(t['sugar_g'])} | {_num(t['fiber_g'])} |"
+            f"{_num(t['sugar_g'])} | {_num(t['fiber_g'])} | {_num(t['sodium_mg'])} |"
         )
         if target:
             delta = t["calories"] - target["calories"]
@@ -416,6 +418,7 @@ def _meal_log(meals: list[dict[str, Any]]) -> list[str]:
                 f"C{_num(item.get('carbs_g') or 0)}",
                 f"sugar {_num(item.get('sugar_g') or 0)}",
                 f"fibre {_num(item.get('fiber_g') or 0)}",
+                f"sodium {_num(item.get('sodium_mg') or 0)}mg",
             ]
             detail = ", ".join(p for p in parts if p)
             tags = f" [{', '.join(item['tags'])}]" if item.get("tags") else ""
@@ -541,14 +544,15 @@ def _pantry(conn: sqlite3.Connection) -> list[str]:
         lines += [
             "### Saved foods (per 100g unless a package size is given)",
             "",
-            "| Food | Brand | kcal | Protein | Fat | Carbs | Sugar | Fibre | Package g |",
-            "|---|---|---|---|---|---|---|---|---|",
+            "| Food | Brand | kcal | Protein | Fat | Carbs | Sugar | Fibre | Sodium mg | Package g |",
+            "|---|---|---|---|---|---|---|---|---|---|",
         ]
         for f in saved:
             lines.append(
                 f"| {f['name']} | {f.get('brand') or '—'} | {_num(f.get('calories'))} | "
                 f"{_num(f.get('protein_g'))} | {_num(f.get('fat_g'))} | {_num(f.get('carbs_g'))} | "
-                f"{_num(f.get('sugar_g'))} | {_num(f.get('fiber_g'))} | {_num(f.get('package_g'))} |"
+                f"{_num(f.get('sugar_g'))} | {_num(f.get('fiber_g'))} | {_num(f.get('sodium_mg'))} | "
+                f"{_num(f.get('package_g'))} |"
             )
         lines.append("")
     if recipes:

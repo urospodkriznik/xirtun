@@ -558,6 +558,42 @@ def test_late_beverage_only_meal_gets_no_nudge(conn):
     assert not any("stay upright" in m for m in messenger.sent)
 
 
+def test_meal_sodium_stored_and_acked(conn):
+    llm = FakeLLM([
+        LLMResponse(data={"intent": "meal"}),
+        LLMResponse(data={"needs_clarification": False, "meals": [
+            _meal([{"name": "vegan sausage", "calories": 265, "sodium_mg": 900},
+                   {"name": "white bread", "calories": 208, "sodium_mg": 460}]),
+        ]}),
+    ])
+    messenger = FakeMessenger()
+    noon = datetime(2026, 7, 6, 12, 0, tzinfo=timezone.utc)   # daytime: no late-meal nudge
+    handle_message("sausage and bread", chat_id="c1", llm=llm, conn=conn, messenger=messenger, now=noon)
+
+    row = conn.execute("SELECT SUM(sodium_mg) AS s FROM meal_items").fetchone()
+    assert row["s"] == 1360
+    assert "1360mg sodium" in messenger.sent[-1]
+
+
+def test_known_food_sodium_overrides(conn):
+    """A saved label's sodium wins over the model's guess, scaled by quantity."""
+    from xirtun.storage import foods
+    foods.add(conn, {"name": "vemondo sausage", "calories": 250, "sodium_mg": 800, "tags": []})
+    llm = FakeLLM([
+        LLMResponse(data={"intent": "meal"}),
+        LLMResponse(data={"needs_clarification": False, "meals": [
+            _meal([{"name": "vemondo sausage", "known_food": "vemondo sausage",
+                    "quantity_g": 50, "sodium_mg": 5}]),
+        ]}),
+    ])
+    noon = datetime(2026, 7, 6, 12, 0, tzinfo=timezone.utc)
+    handle_message("50g vemondo sausage", chat_id="c1", llm=llm, conn=conn,
+                   messenger=FakeMessenger(), now=noon)
+
+    row = conn.execute("SELECT sodium_mg FROM meal_items").fetchone()
+    assert row["sodium_mg"] == 400.0        # 800 per 100g x 50g, not the model's 5
+
+
 def test_meal_fiber_stored_and_acked(conn):
     llm = FakeLLM([
         LLMResponse(data={"intent": "meal"}),

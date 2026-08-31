@@ -45,7 +45,7 @@ def save_meal(
 
     for item in meal["items"]:
         conn.execute(
-            "INSERT INTO meal_items (meal_id, name, quantity_g, calories, protein_g, fat_g, carbs_g, sugar_g, fiber_g, tags) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO meal_items (meal_id, name, quantity_g, calories, protein_g, fat_g, carbs_g, sugar_g, fiber_g, sodium_mg, tags) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 meal_id,
                 item["name"],
@@ -56,6 +56,7 @@ def save_meal(
                 item.get("carbs_g"),
                 item.get("sugar_g"),
                 item.get("fiber_g"),
+                item.get("sodium_mg"),
                 json.dumps(item.get("tags", [])),
             ),
         )
@@ -125,7 +126,7 @@ def meals_since(conn: sqlite3.Connection, since_iso: str) -> list[dict[str, Any]
     result = []
     for r in rows:
         items = conn.execute(
-            "SELECT name, calories, protein_g, fat_g, carbs_g, sugar_g, fiber_g, tags "
+            "SELECT name, calories, protein_g, fat_g, carbs_g, sugar_g, fiber_g, sodium_mg, tags "
             "FROM meal_items WHERE meal_id = ?",
             (r["id"],),
         ).fetchall()
@@ -136,7 +137,7 @@ def meals_since(conn: sqlite3.Connection, since_iso: str) -> list[dict[str, Any]
 # Every macro the diary tracks. The aggregates below carry all of them: an agent that
 # is told to report on sugar but handed only calories/protein/fibre cannot see a sugar
 # trend at all, and is left with no honest way to discuss one.
-AGGREGATE_MACROS = ("calories", "protein_g", "fat_g", "carbs_g", "sugar_g", "fiber_g")
+AGGREGATE_MACROS = ("calories", "protein_g", "fat_g", "carbs_g", "sugar_g", "fiber_g", "sodium_mg")
 
 
 def daily_totals(conn: sqlite3.Connection, since_iso: str) -> list[dict[str, Any]]:
@@ -345,7 +346,7 @@ def all_meals(conn: sqlite3.Connection, since_iso: str | None = None) -> list[di
     result = []
     for r in rows:
         items = conn.execute(
-            "SELECT name, quantity_g, calories, protein_g, fat_g, carbs_g, sugar_g, fiber_g, tags "
+            "SELECT name, quantity_g, calories, protein_g, fat_g, carbs_g, sugar_g, fiber_g, sodium_mg, tags "
             "FROM meal_items WHERE meal_id = ? ORDER BY id",
             (r["id"],),
         ).fetchall()

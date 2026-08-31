@@ -16,7 +16,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Callable
 
-from xirtun import targets
+from xirtun import targets, watchlist
 from xirtun.memory import diet as diet_memory
 from xirtun.memory import observations
 from xirtun.storage import diary
@@ -53,6 +53,12 @@ TOOLS_DOC = (
     "persist a new calibrated working target (clamped to safe bounds; rationale required)\n"
     "- get_weight_trend(days:int=56) -> the user's logged weight AND waist trends over "
     "the window (waist is what separates fat loss from muscle loss when weight moves)\n"
+    "- get_watchlist() -> nutrients/risks worth watching for THIS user BEYOND their stated "
+    "goals, plus which are due for in-depth review this week\n"
+    "- set_watchlist(items:[{name:str, why:str}]) -> (re)derive and save that list; each "
+    "`why` must name the profile evidence behind it\n"
+    "- mark_watchlist_reviewed(names:[str]) -> stamp the items you covered this week so "
+    "the rotation moves on to the others next week\n"
 )
 
 
@@ -65,6 +71,7 @@ def _format_meals(meals: list[dict[str, Any]]) -> str:
             f"{i['name']} (~{round(i['calories'] or 0)}kcal, "
             f"{round(i.get('protein_g') or 0)}g protein, "
             f"{round(i.get('fiber_g') or 0)}g fibre, "
+            f"{round(i.get('sodium_mg') or 0)}mg sodium, "
             f"tags={json.loads(i['tags'] or '[]')})"
             for i in m["items"]
         )
@@ -139,7 +146,7 @@ def _intake_summary(ctx: ToolContext, args: dict[str, Any]) -> str:
                 f"- {r['day']}: {r['meals']} meal(s), ~{round(r['calories'])} kcal, "
                 f"{round(r['protein_g'])}g protein, {round(r['fat_g'])}g fat, "
                 f"{round(r['carbs_g'])}g carbs, {round(r['sugar_g'])}g sugar, "
-                f"{round(r['fiber_g'])}g fibre"
+                f"{round(r['fiber_g'])}g fibre, {round(r['sodium_mg'])}mg sodium"
             )
         lines.append(
             f"Days logged this week: {len(day_rows)} of 7. (Judge whether sparse days "
@@ -163,7 +170,8 @@ def _intake_summary(ctx: ToolContext, args: dict[str, Any]) -> str:
                 f"- {_week_label(w['weeks_ago'])}: ~{round(w['avg_calories'])} kcal, "
                 f"{round(w['avg_protein_g'])}g protein, {round(w['avg_fat_g'])}g fat, "
                 f"{round(w['avg_carbs_g'])}g carbs, {round(w['avg_sugar_g'])}g sugar, "
-                f"{round(w['avg_fiber_g'])}g fibre ({w['days_logged']} day(s) logged)"
+                f"{round(w['avg_fiber_g'])}g fibre, "
+                f"{round(w['avg_sodium_mg'])}mg sodium ({w['days_logged']} day(s) logged)"
             )
         else:
             lines.append(f"- {_week_label(w['weeks_ago'])}: nothing logged")
@@ -176,7 +184,8 @@ def _intake_summary(ctx: ToolContext, args: dict[str, Any]) -> str:
             f"This week vs last week: {d_cal:+.0f} kcal ({pct:+d}%), "
             f"{this_wk['avg_protein_g'] - last_wk['avg_protein_g']:+.0f}g protein, "
             f"{this_wk['avg_sugar_g'] - last_wk['avg_sugar_g']:+.0f}g sugar, "
-            f"{this_wk['avg_fiber_g'] - last_wk['avg_fiber_g']:+.0f}g fibre."
+            f"{this_wk['avg_fiber_g'] - last_wk['avg_fiber_g']:+.0f}g fibre, "
+            f"{this_wk['avg_sodium_mg'] - last_wk['avg_sodium_mg']:+.0f}mg sodium."
         )
 
     # When a nutrient started being recorded. Averaging across that boundary silently
@@ -370,5 +379,10 @@ def build_dispatch(ctx: ToolContext) -> dict[str, Callable[[dict[str, Any]], str
             targets.format_weight_trend(ctx.conn, now=ctx.now, days=int(a.get("days", 56)))
             + "\n"
             + targets.format_waist_trend(ctx.conn, now=ctx.now, days=int(a.get("days", 56)))
+        ),
+        "get_watchlist": lambda a: watchlist.format_watchlist(ctx.conn, now=ctx.now),
+        "set_watchlist": lambda a: watchlist.write(ctx.conn, a.get("items") or [], now=ctx.now),
+        "mark_watchlist_reviewed": lambda a: watchlist.mark_reviewed(
+            ctx.conn, a.get("names") or [], now=ctx.now
         ),
     }

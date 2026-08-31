@@ -36,6 +36,7 @@ CREATE TABLE IF NOT EXISTS meal_items (
     carbs_g    REAL,
     sugar_g    REAL,
     fiber_g    REAL,
+    sodium_mg  REAL,
     tags       TEXT
 );
 
@@ -74,6 +75,7 @@ CREATE TABLE IF NOT EXISTS custom_meals (
     carbs_g    REAL,
     sugar_g    REAL,
     fiber_g    REAL,
+    sodium_mg  REAL,
     created_at TEXT NOT NULL
 );
 
@@ -141,6 +143,7 @@ CREATE TABLE IF NOT EXISTS known_foods (
     carbs_g    REAL,
     sugar_g    REAL,
     fiber_g    REAL,
+    sodium_mg  REAL,
     package_g  REAL,
     tags       TEXT,
     created_at TEXT NOT NULL
@@ -171,9 +174,9 @@ def _migrate(conn: sqlite3.Connection) -> None:
             if column not in existing:
                 conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} REAL")
 
-    add_missing("known_foods", ("package_g", "fiber_g", "sugar_g"))
-    add_missing("meal_items", ("sugar_g", "fiber_g"))
-    add_missing("custom_meals", ("sugar_g", "fiber_g"))
+    add_missing("known_foods", ("package_g", "fiber_g", "sugar_g", "sodium_mg"))
+    add_missing("meal_items", ("sugar_g", "fiber_g", "sodium_mg"))
+    add_missing("custom_meals", ("sugar_g", "fiber_g", "sodium_mg"))
 
     # Weekly Q&A moved out of `pending` into its own table — drop any stale row a
     # pre-migration version may have left in `pending` so it can't be misrouted.

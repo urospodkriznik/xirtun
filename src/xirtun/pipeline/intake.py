@@ -149,7 +149,8 @@ def _fmt_occurred(occurred_at: str | None) -> str:
 
 def format_ack(meals: list[dict[str, Any]]) -> str:
     """Confirmation summarizing the meal(s) logged, with per-item and total macros."""
-    all_totals = {"calories": 0.0, "protein_g": 0.0, "fat_g": 0.0, "carbs_g": 0.0, "sugar_g": 0.0, "fiber_g": 0.0}
+    all_totals = {"calories": 0.0, "protein_g": 0.0, "fat_g": 0.0, "carbs_g": 0.0, "sugar_g": 0.0,
+                  "fiber_g": 0.0, "sodium_mg": 0.0}
     lines = []
     header = "Meal logged:" if len(meals) == 1 else f"Logged {len(meals)} meals:"
     lines.append(header)
@@ -179,7 +180,8 @@ def format_ack(meals: list[dict[str, Any]]) -> str:
         f"{round(all_totals['protein_g'])}g protein, "
         f"{round(all_totals['fat_g'])}g fat, {round(all_totals['carbs_g'])}g carbs "
         f"(incl. {round(all_totals['sugar_g'])}g sugar), "
-        f"{round(all_totals['fiber_g'])}g fibre."
+        f"{round(all_totals['fiber_g'])}g fibre, "
+        f"{round(all_totals['sodium_mg'])}mg sodium."
     )
     lines.append(total)
     return "\n".join(lines)
@@ -963,6 +965,8 @@ def _food_line(food: dict[str, Any]) -> str:
         macros += f" S{_food_macro(food.get('sugar_g'))}"
     if food.get("fiber_g") is not None:
         macros += f" Fb{_food_macro(food.get('fiber_g'))}"
+    if food.get("sodium_mg") is not None:
+        macros += f" Na{_food_macro(food.get('sodium_mg'))}mg"
     parts.append(f"({macros})")
     if food.get("package_g"):
         parts.append(f"[{round(food['package_g'])}g/pack]")
@@ -1017,7 +1021,8 @@ def _save_custom_meal(
 
 
 # Nutrition fields scaled when only part of a saved meal was eaten.
-_SCALABLE_ITEM_FIELDS = ("quantity_g", "calories", "protein_g", "fat_g", "carbs_g", "sugar_g", "fiber_g")
+_SCALABLE_ITEM_FIELDS = ("quantity_g", "calories", "protein_g", "fat_g", "carbs_g", "sugar_g",
+                         "fiber_g", "sodium_mg")
 
 
 def _scale_item(item: dict[str, Any], factor: float) -> dict[str, Any]:
@@ -1057,7 +1062,7 @@ def _apply_known_foods(conn: sqlite3.Connection, meal: dict[str, Any]) -> None:
         if food is None:
             continue
         factor = quantity / 100.0
-        for key in ("calories", "protein_g", "fat_g", "carbs_g", "sugar_g", "fiber_g"):
+        for key in ("calories", "protein_g", "fat_g", "carbs_g", "sugar_g", "fiber_g", "sodium_mg"):
             if food.get(key) is not None:
                 item[key] = round(food[key] * factor, 1)
         # Show the saved product's real name, not whatever the model called it — so a

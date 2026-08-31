@@ -17,12 +17,12 @@ def add(conn: sqlite3.Connection, food: dict[str, Any], *, now: datetime | None 
     now = now or datetime.now().astimezone()
     conn.execute(
         "INSERT INTO known_foods "
-        "(name, brand, calories, protein_g, fat_g, carbs_g, sugar_g, fiber_g, package_g, tags, created_at) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+        "(name, brand, calories, protein_g, fat_g, carbs_g, sugar_g, fiber_g, sodium_mg, package_g, tags, created_at) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
         "ON CONFLICT(name) DO UPDATE SET "
         "brand = excluded.brand, calories = excluded.calories, "
         "protein_g = excluded.protein_g, fat_g = excluded.fat_g, "
-        "carbs_g = excluded.carbs_g, sugar_g = excluded.sugar_g, fiber_g = excluded.fiber_g, "
+        "carbs_g = excluded.carbs_g, sugar_g = excluded.sugar_g, fiber_g = excluded.fiber_g, sodium_mg = excluded.sodium_mg, "
         "package_g = excluded.package_g, tags = excluded.tags",
         (
             food["name"],
@@ -33,6 +33,7 @@ def add(conn: sqlite3.Connection, food: dict[str, Any], *, now: datetime | None 
             food.get("carbs_g"),
             food.get("sugar_g"),
             food.get("fiber_g"),
+            food.get("sodium_mg"),
             food.get("package_g"),
             json.dumps(food.get("tags", [])),
             now.isoformat(),

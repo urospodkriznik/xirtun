@@ -11,7 +11,7 @@ from xirtun import targets
 from xirtun.memory import diet as memory_diet
 from xirtun.storage import diary
 
-_MACROS = ("calories", "protein_g", "fat_g", "carbs_g", "sugar_g", "fiber_g")
+_MACROS = ("calories", "protein_g", "fat_g", "carbs_g", "sugar_g", "fiber_g", "sodium_mg")
 
 
 def _totals(meals: list[dict[str, Any]]) -> dict[str, float]:
@@ -57,12 +57,12 @@ def _band_text(lo: float | None, hi: float | None, unit: str) -> str:
     return f"≥{_amount(lo or 0, unit)}"
 
 
-def _cap_line(label: str, eaten: float, cap: float) -> str:
-    """Eaten vs a ceiling (sugar) — the goal is to stay under it, not to reach it."""
-    band = _band_text(None, cap, "g")
+def _cap_line(label: str, eaten: float, cap: float, unit: str = "g") -> str:
+    """Eaten vs a ceiling (sugar, sodium) — the goal is to stay under it, not reach it."""
+    band = _band_text(None, cap, unit)
     if eaten > cap:
-        return f"- {label}: {_amount(eaten, 'g')} of {band} → {_amount(eaten - cap, 'g')} over the cap"
-    return f"- {label}: {_amount(eaten, 'g')} of {band} → {_amount(cap - eaten, 'g')} before the cap"
+        return f"- {label}: {_amount(eaten, unit)} of {band} → {_amount(eaten - cap, unit)} over the cap"
+    return f"- {label}: {_amount(eaten, unit)} of {band} → {_amount(cap - eaten, unit)} before the cap"
 
 
 def _floor_line(label: str, eaten: float, floor: float) -> str:
@@ -95,8 +95,10 @@ def _remaining_lines(conn: sqlite3.Connection, eaten: dict[str, float]) -> list[
         _range_line("Carbs", eaten["carbs_g"], g["carbs_min_g"], g["carbs_max_g"]),
         _cap_line("Sugar", eaten["sugar_g"], g["sugar_max_g"]),
         _floor_line("Fibre", eaten["fiber_g"], g["fiber_min_g"]),
+        _cap_line("Sodium", eaten["sodium_mg"], g["sodium_max_mg"], "mg"),
         "(Fat, carbs, sugar and fibre are general guidelines derived from your "
-        "calorie target — only calories and protein are calibrated for you.)",
+        "calorie target, sodium is the WHO limit — only calories and protein are "
+        "calibrated for you.)",
     ]
 
 
@@ -111,7 +113,7 @@ def today_report(conn: sqlite3.Connection, now: datetime) -> str:
             f"Today — {len(meals)} meal(s), ~{round(t['calories'])} kcal "
             f"({round(t['protein_g'])}g protein, {round(t['fat_g'])}g fat, "
             f"{round(t['carbs_g'])}g carbs incl. {round(t['sugar_g'])}g sugar, "
-            f"{round(t['fiber_g'])}g fibre):"
+            f"{round(t['fiber_g'])}g fibre, {round(t['sodium_mg'])}mg sodium):"
         ]
         for meal in meals:
             names = ", ".join(item["name"] for item in meal["items"])
@@ -152,6 +154,7 @@ _NUTRIENTS = (
     ("Carbs", "carbs_g", "g"),
     ("Sugar", "sugar_g", "g"),
     ("Fibre", "fiber_g", "g"),
+    ("Sodium", "sodium_mg", "mg"),
 )
 
 
@@ -170,6 +173,7 @@ def _average_lines(conn: sqlite3.Connection, avg: dict[str, float], days_logged:
             "carbs_g": (g["carbs_min_g"], g["carbs_max_g"]),
             "sugar_g": (None, g["sugar_max_g"]),
             "fiber_g": (g["fiber_min_g"], None),
+            "sodium_mg": (None, g["sodium_max_mg"]),
         }
 
     header = f"Daily average across the {days_logged} day(s) you logged"
@@ -181,7 +185,8 @@ def _average_lines(conn: sqlite3.Connection, avg: dict[str, float], days_logged:
     if target is not None:
         lines.append(
             "(Fat, carbs, sugar and fibre are general guidelines derived from your "
-            "calorie target — only calories and protein are calibrated for you.)"
+            "calorie target, sodium is the WHO limit — only calories and protein are "
+            "calibrated for you.)"
         )
     return lines
 

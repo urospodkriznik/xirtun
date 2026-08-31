@@ -36,6 +36,7 @@ class Item(BaseModel):
     carbs_g: float | None = None
     sugar_g: float | None = None       # sugars, a subset of carbs
     fiber_g: float | None = None       # dietary fibre
+    sodium_mg: float | None = None     # sodium in MILLIgrams (salt g x 400)
     tags: list[str] = Field(default_factory=list)
     known_food: str | None = None      # name of a matching saved food, if any
     custom_meal: str | None = None     # name of a saved custom meal this item stands in for
@@ -149,6 +150,13 @@ class FoodRegistration(BaseModel):
     )
     fiber_g: float | None = Field(
         default=None, description="grams of fibre per 100g (also called 'fibre' or 'fibra')"
+    )
+    sodium_mg: float | None = Field(
+        default=None,
+        description=(
+            "MILLIgrams of sodium per 100g. EU labels state SALT in grams instead — "
+            "convert with sodium_mg = salt_g * 400 (salt is 2.5x sodium by weight)"
+        ),
     )
     package_g: float | None = Field(default=None, description="total grams in one package, if stated")
     tags: list[str] = Field(default_factory=list)

@@ -157,3 +157,12 @@ def test_waist_is_kept_out_of_the_calorie_formula(conn):
     targets.add_waist(conn, 84.0, now=datetime(2026, 8, 24, 9, 0))
     assert targets.compute(targets.read_metrics(conn)) == before
     assert "waist" not in str(targets.read_metrics(conn)).lower()
+
+
+def test_sodium_guideline_is_an_absolute_who_limit(conn):
+    """Sodium is a fixed WHO ceiling, unlike fat/carbs/sugar/fibre which scale with
+    the calorie target — eating more does not license more salt."""
+    low = targets.macro_guidelines(1800)
+    high = targets.macro_guidelines(3200)
+    assert low["sodium_max_mg"] == high["sodium_max_mg"] == 2000
+    assert high["sugar_max_g"] > low["sugar_max_g"]     # calorie-derived ones do scale
