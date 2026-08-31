@@ -211,6 +211,9 @@ CREATE TABLE meal_items (
     protein_g  REAL,
     fat_g      REAL,
     carbs_g    REAL,
+    sugar_g    REAL,               -- subset of carbs
+    fiber_g    REAL,
+    sodium_mg  REAL,               -- MILLIgrams (EU labels give salt: x400)
     tags       TEXT                -- JSON array: '["soy","iron-rich"]'
 );
 
@@ -223,6 +226,65 @@ CREATE TABLE symptoms (
     duration    TEXT,              -- optional free text, e.g. "all morning"
     raw_text    TEXT NOT NULL,
     tags        TEXT               -- JSON array
+);
+
+CREATE TABLE exercises (
+    id              INTEGER PRIMARY KEY,
+    occurred_at     TEXT NOT NULL,
+    logged_at       TEXT NOT NULL,
+    type            TEXT NOT NULL, -- "running", "cycling", ...
+    duration_min    REAL,
+    intensity       TEXT,          -- "low" | "moderate" | "vigorous"
+    calories_burned REAL,          -- estimated from type/duration/body weight
+    distance_km     REAL,
+    raw_text        TEXT NOT NULL,
+    notes           TEXT,
+    tags            TEXT
+);
+
+CREATE TABLE known_foods (         -- exact label nutrition, per 100g
+    id         INTEGER PRIMARY KEY,
+    name       TEXT NOT NULL UNIQUE,
+    brand      TEXT,
+    calories   REAL,
+    protein_g  REAL,
+    fat_g      REAL,
+    carbs_g    REAL,
+    sugar_g    REAL,
+    fiber_g    REAL,
+    sodium_mg  REAL,
+    package_g  REAL,               -- so "a whole pack" is computable
+    tags       TEXT,
+    created_at TEXT NOT NULL
+);
+
+CREATE TABLE custom_meals (        -- saved recipes, logged by name
+    id         INTEGER PRIMARY KEY,
+    name       TEXT NOT NULL UNIQUE,
+    items      TEXT NOT NULL,      -- JSON array of structured items
+    calories   REAL,               -- totals, denormalised for listing
+    protein_g  REAL,
+    fat_g      REAL,
+    carbs_g    REAL,
+    sugar_g    REAL,
+    fiber_g    REAL,
+    sodium_mg  REAL,
+    created_at TEXT NOT NULL
+);
+
+CREATE TABLE weight_log (          -- the arbiter of whether a target is right
+    id          INTEGER PRIMARY KEY,
+    occurred_at TEXT NOT NULL,
+    weight_kg   REAL NOT NULL
+);
+
+CREATE TABLE weekly_qa (           -- the review's follow-up questions
+    chat_id    TEXT PRIMARY KEY,   -- its OWN table, not `pending`: long-lived,
+    mode       TEXT NOT NULL,      -- and must survive unrelated commands that
+    questions  TEXT NOT NULL,      -- reuse the single per-chat pending slot
+    answers    TEXT NOT NULL,
+    report     TEXT NOT NULL DEFAULT '',
+    updated_at TEXT NOT NULL
 );
 
 CREATE TABLE pending (             -- hot-path session state, persisted

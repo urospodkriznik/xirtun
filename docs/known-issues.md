@@ -38,12 +38,12 @@ comparing two different estimation regimes.
 `/exportdeepdive` lists any that got through under "Rows that don't add up". The
 existing row is untouched — nothing rewrites logged data.
 
-## 6. Sugar and fibre are absent from entries predating their columns · open
+## 6. Sugar, fibre and sodium are absent from entries predating their columns · open
 
 **Repro.** Every week in the live database sums to `0g fibre`.
 
-**Root cause.** Both columns were added by migration after logging began, so earlier
-rows hold NULL. Read bare, that is indistinguishable from measured zero.
+**Root cause.** Each column was added by migration after logging began (sugar and
+fibre first, sodium later still), so earlier rows hold NULL. Read bare, that is indistinguishable from measured zero.
 
 **Status.** `get_intake_summary` now reports when each nutrient started being
 recorded, and says explicitly when one has *never* been recorded so the zeros aren't

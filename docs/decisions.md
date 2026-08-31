@@ -324,3 +324,36 @@ Merging them would either freeze the prose or destabilise the restore path. Mark
 for the briefing costs roughly half the tokens of equivalent JSON at the same
 fidelity, and 90 days keeps the file inside one context window as years accumulate —
 what falls outside the window is stated, not silently dropped.
+
+---
+
+## ADR-016 — A derived nutrition watchlist, covered on rotation · Accepted
+
+**Context.** The weekly review only ever discussed what the user had already told it
+to care about: goals and notes. Everything they never thought to ask about stayed
+invisible — a vegan diary was never checked for iodine or selenium, and the family
+history captured at onboarding (heart disease, hypertension) was read by nothing at
+all, even while the diary filled with high-sodium processed food. The report could
+reflect the user's worries back at them, but not add to them.
+
+**Decision.** The agent derives a watchlist from the *whole* profile — diet style,
+medical conditions, family history, age/sex, location, and the supplements already
+being taken — and persists it (kv, `nutrition_watchlist`), each item carrying the
+profile evidence behind it. `get_watchlist` names the one or two least recently
+covered items as due; the report goes deep on those alone and calls
+`mark_watchlist_reviewed`. Re-deriving after a profile change preserves the rotation
+dates. Sodium became a tracked macro in the same change so the most common of these
+risks is measurable rather than guessed at.
+
+**Rationale.** Persisted rather than re-derived each week for the reason ADR-014
+gives for calibrated targets: a good derivation that lives only in one message is
+lost the moment it is sent. Rotation is what makes the feature survivable — a report
+reciting nine nutrients every week is one the user learns to skip, and skipping it
+costs them the weeks where an item genuinely mattered. Supplements are read first so
+the agent cannot lecture someone about a nutrient they already take daily. The
+measured-vs-inferred rule still binds: these are inferences from food names, and
+anything clinical is framed as what a blood test or a doctor settles.
+
+**Multi-user.** Nothing here is user-specific. The code asks what a given profile
+implies; the answer lives in that user's own database. A profile with no cardiac
+history simply never gets sodium on its list.
