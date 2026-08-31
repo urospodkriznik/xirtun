@@ -260,3 +260,67 @@ the cron trigger still fires within one day of boot in the worst case — a boun
 delay proportional to how long the process was actually down, not an indefinite
 loss. That's an acceptable, expected trade for a single-user personal deployment,
 and it's strictly better than surprising the user with a report at 3am.
+
+---
+
+## ADR-014 — The app owns the numbers; the agent owns the prose · Accepted
+
+**Context.** An outside model reading a 90-day export found the weekly agent had
+written 1899 kcal and 78g protein into `observations.md` for a week the diary puts
+at 2098 and 89g. That figure then entered the next run as established fact and
+shaped the advice built on it. The system prompt already forbade exactly this — it
+says every calorie/protein/fibre figure must come from `get_intake_summary` and that
+model arithmetic is not trustworthy. It was ignored anyway. The same review found a
+"persistent deficit" framing that had been true a month earlier and was carried
+forward unchecked.
+
+**Decision.** Stop relying on instruction for anything checkable.
+
+1. Every number the agent can quote is computed in SQL first — per-day and per-week
+   averages for *all six* macros (not just calories/protein/fibre, which left a
+   rising sugar trend literally unseeable), food frequency with the logged-day count
+   as denominator, symptom-day comparisons, evening calorie share, and the date each
+   nutrient started being recorded.
+2. The app writes the figures into `observations.md` itself, inside a delimited block
+   it replaces every run, and tells the agent the block wins any disagreement with
+   its prose. The agent rewrites that file wholesale each week; anything it keeps is
+   retyped from memory, and a retyped number drifts.
+3. `run_weekly` checks the report's calorie claims against computed values and logs
+   any it cannot account for (`agent/verify.py`).
+
+**Rationale.** A prompt line is a request; a computed value is a fact. Where the two
+compete, the fact should not depend on the model choosing to honour the request —
+particularly here, where a wrong number does not merely make one sentence wrong but
+becomes the following week's premise. The verification is deliberately narrow
+(calorie figures in a plausible daily-intake range only) so that a legitimate
+recommendation — "add a 200 kcal snack" — is never flagged as a false claim; it
+catches invented averages, not every possible slip. Tradeoff: the memory file is no
+longer purely agent-authored, and the app's block costs context on every run. Both
+are cheap next to compounding a wrong average week after week.
+
+---
+
+## ADR-015 — Two exports: a backup to restore, a briefing to read · Accepted
+
+**Context.** `/export` produced JSON containing meals, symptoms, exercises and saved
+foods — and nothing else. It carried no body metrics, no targets, no weight log and
+neither memory file, so it could not actually restore the app, and a model handed it
+could total calories but had no idea whose they were. Meanwhile a weekly summary
+cannot see across a quarter, and the app has no way to ask a larger model to look.
+
+**Decision.** Split by audience. `/exportbackup` (was `/export`) stays
+machine-shaped: versioned JSON, now including metrics, both targets, weight and waist
+logs, timezone, onboarding version, stored weekly reports and the memory files with
+`diet.md`'s history snapshots. `/exportdeepdive` is a Markdown briefing over the last
+90 days — context first (who this is, what they're aiming at), arithmetic already
+done, every meal in the user's own words, and an explicit statement of the data's own
+weak spots. Weekly reports are persisted (`weekly_reports`) specifically so this
+export gets richer over time; they used to be sent to Telegram and forgotten.
+
+**Rationale.** The two have opposite requirements. A backup format must stay stable
+and parseable for a future importer; a briefing should be free to be reworded
+whenever it reads better, and is written for judgement rather than restoration.
+Merging them would either freeze the prose or destabilise the restore path. Markdown
+for the briefing costs roughly half the tokens of equivalent JSON at the same
+fidelity, and 90 days keeps the file inside one context window as years accumulate —
+what falls outside the window is stated, not silently dropped.

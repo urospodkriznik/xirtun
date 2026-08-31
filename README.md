@@ -76,10 +76,13 @@ your data in plain files you own, and talks to no one but you and the model prov
 - **Weekly autonomous review** — a tool-using agent reviews your recent diary, your
   profile, your targets, your **weight trend**, and its own past notes, then sends a
   **structured report** (overview, energy & macros, food quality, nutrient wins,
-  watch-outs, actions) with non-obvious patterns and **actionable** suggestions, framed
-  as things to look into or raise with a doctor — never a diagnosis. It compares this
-  week against recent weeks (**week-over-week**, computed in SQL) and gives a plain
-  verdict on how well you actually ate. It treats the calorie target as an
+  watch-outs, actions, blind spot) with non-obvious patterns and **actionable**
+  suggestions, framed as things to look into or raise with a doctor — never a
+  diagnosis. It reads **12 weeks** of SQL-computed weekly averages, not just the last
+  one, so a macro drifting slowly is visible at all; it re-tests what it concluded last
+  week instead of repeating it; it states the sample size behind any pattern claim; and
+  it names one thing it *couldn't* judge plus the single measurement that would settle
+  it. It also gives a plain verdict on how well you actually ate. It treats the calorie target as an
   *estimate* and reconciles it against your weight trend and goal, so it won't tell you
   to eat more while your weight is steady or rising — and when the evidence justifies
   it, it **persists a recalibrated working target** (small steps, safe bounds, with its
@@ -166,10 +169,25 @@ Two loops, deliberately separated:
 - **Hot path** (every inbound message): a deterministic state machine —
   `classify → clarify? → structure → store`. The cheap model handles intent
   classification and structuring; commands and stats are pure Python (no model calls).
+  An estimate whose macros can't produce its own calorie figure gets one corrective
+  retry before it's stored, and the acknowledgement prints the grams it assumed, so a
+  wrong portion is visible immediately rather than months later in a total.
 - **Weekly review**: a ReAct-style **agent loop** that's given tools
-  (`query_diary`, read/write `observations`, read/update the profile, `get_targets`)
-  and autonomously decides which to call, what to conclude, and whether to message you
-  at all. The scheduler only *triggers* it — the decisions live in the loop.
+  (`get_intake_summary`, `get_food_frequency`, `compare_symptom_days`, `query_diary`,
+  `get_weight_trend`, read/write `observations`, read/update the profile,
+  `get_targets`/`set_targets`) and autonomously decides which to call, what to conclude,
+  and whether to message you at all. The scheduler only *triggers* it — the decisions
+  live in the loop.
+
+**The agent doesn't do arithmetic.** Every number it can quote is computed in SQL first
+— per-day and per-week macro averages, how often a food appears (with the logged-day
+count as denominator), symptom-day comparisons, the share of energy eaten after 20:00.
+It is told never to sum meal items itself. Two things enforce that rather than trusting
+it: the app writes the numbers into `observations.md` itself, in a block it replaces
+each run, so figures in the agent's own memory are never a transcription; and the
+report's calorie claims are checked against computed values before delivery, with
+anything unaccountable logged. This exists because a retyped average once drifted
+200 kcal and became the following week's premise.
 
 Boundaries that keep it swappable and fully testable:
 
@@ -235,7 +253,7 @@ it.
 ## Testing
 
 ```bash
-uv run pytest        # ~100 tests, fully offline
+uv run pytest        # ~210 tests, fully offline
 uv run ruff check    # lint
 ```
 
@@ -258,11 +276,13 @@ src/xirtun/
   deepdive.py        /exportdeepdive briefing (Markdown)
   messaging/         Messenger protocol + Telegram transport (incl. voice)
   llm/               LLMClient protocol + Gemini adapter (structured output, audio, retries)
-  storage/           SQLite: diary, custom foods, runs, admin/reset
+  storage/           SQLite: diary, custom foods, weight/waist, runs,
+                     weekly reports, admin/reset
   memory/            diet.md / observations.md read/write
   pipeline/          hot path: classify, structure, symptom, shopping, food,
                      onboarding, sessions, intake (the state machine)
-  agent/             the weekly agent loop and its tools
+  agent/             the weekly agent loop, its tools, and the check on
+                     the numbers it reports
 tests/               offline tests (fakes for LLM + messaging)
 docs/                product, architecture, decisions, roadmap
 ```

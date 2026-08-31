@@ -43,10 +43,14 @@ Captured so good ideas are not lost. Each needs its own scoping before it starts
 
 ### Analysis
 - **Deterministic stats / commands:** `/today`, `/week` computing exact totals
-  via SQL aggregation; charts. *(Partly done: `get_intake_summary` now gives the
-  weekly agent SQL-computed per-day totals + a week-over-week comparison.)*
+  via SQL aggregation; charts. *(Done except charts: `/today` and `/week` compare
+  against the working target, and `get_intake_summary` gives the agent SQL-computed
+  per-day totals plus 12 weeks of per-week averages for all six macros.)*
 - **Deterministic / statistical correlation** between tags and symptoms (beyond
   the LLM eyeballing a window), once there is enough data density to be honest.
+  *(Partly done: `compare_symptom_days` computes symptom days vs the rest on
+  calories, evening calories, fibre and sugar, and reports the day count so a weak
+  signal reads as one. Tag-level correlation and any real statistics remain.)*
 - **Longitudinal / monthly trend analysis (build once there's 2–3 months of real
   data — ~Sep 2026 at current pace; do NOT build against empty history).** The
   weekly review stays focused on the last ~4 weeks; long-range comparison is a
@@ -136,7 +140,11 @@ crib the exact workflow from there when implementing.
 ### Tracking depth
 - **Energy-balance accounting** — exercise sessions are now logged with an estimated
   calorie burn; a future step is netting intake vs. expenditure into the targets.
-- Richer supplement tracking, mood, hydration, sleep, meal location/context.
+- **Waist logging** (`/addwaist`) — done. Weight alone can't separate fat loss from
+  muscle loss, which is the question actually being asked; kept out of `metrics` so
+  no target can move because a tape measure did.
+- Richer supplement tracking, mood, hydration, meal location/context. *(Sleep is
+  parked: the author's call — not diet-related enough to earn the friction.)*
 
 ## Explicitly parked
 

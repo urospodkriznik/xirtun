@@ -101,7 +101,11 @@ It holds everything stateful:
 - `diet.history/` — pre-rewrite profile snapshots
 
 Nothing here is in git, so **don't `git clean -x` or delete `data/`**. Back it up with
-the `/export` command (sends a JSON dump of the diary) or by copying `data/`.
+the `/exportbackup` command — it sends one JSON file holding the diary, your metrics
+and targets, weight and waist logs, saved foods, past weekly reviews, and the memory
+files including their history snapshots — or by copying `data/` wholesale. If you copy
+the database by hand, take `xirtun.db-wal` with it: recent writes may still be sitting
+in the write-ahead log and copying `xirtun.db` alone can silently miss them.
 
 ## 6. Install and start the service
 
