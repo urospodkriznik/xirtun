@@ -138,6 +138,33 @@ def test_clarification_then_complete(conn):
     assert sessions.get_active(conn, "c1") is None
 
 
+def test_clarification_cancelled_with_bare_word(conn):
+    llm = FakeLLM([
+        LLMResponse(data={"intent": "meal"}),
+        LLMResponse(data={"needs_clarification": True, "question": "How much?"}),
+    ])
+    messenger = FakeMessenger()
+    handle_message("I had curry", chat_id="c1", llm=llm, conn=conn, messenger=messenger)
+    handle_message("cancel", chat_id="c1", llm=llm, conn=conn, messenger=messenger)
+    assert "Cancelled" in messenger.sent[-1]
+    assert conn.execute("SELECT COUNT(*) AS n FROM meals").fetchone()["n"] == 0
+    assert sessions.get_active(conn, "c1") is None
+
+
+def test_clarification_cancelled_with_slash_form(conn):
+    """'/cancel' must work here too, not just the bare word — same escape hatch as the
+    pending-command prompts."""
+    llm = FakeLLM([
+        LLMResponse(data={"intent": "meal"}),
+        LLMResponse(data={"needs_clarification": True, "question": "How much?"}),
+    ])
+    messenger = FakeMessenger()
+    handle_message("I had curry", chat_id="c1", llm=llm, conn=conn, messenger=messenger)
+    handle_message("/cancel", chat_id="c1", llm=llm, conn=conn, messenger=messenger)
+    assert "Cancelled" in messenger.sent[-1]
+    assert conn.execute("SELECT COUNT(*) AS n FROM meals").fetchone()["n"] == 0
+
+
 def test_multiple_meals_stored_separately(conn):
     llm = FakeLLM([
         LLMResponse(data={"intent": "meal"}),
@@ -689,6 +716,33 @@ def test_food_duplicate_cancel_saves_nothing(conn):
 
     assert "myway falafel" not in foods.names(conn)                              # not added
     assert foods.find_by_name(conn, "myway vegan falafels")["calories"] == 214    # unchanged
+
+
+def test_savefood_single_shared_brand_word_is_not_flagged_as_duplicate(conn):
+    """Two unrelated products that only share a store-brand word ('Vemondo') must not
+    trigger the 'you already have X' prompt — only genuine near-duplicates should."""
+    from xirtun.storage import foods
+    foods.add(conn, {"name": "Vemondo protein pudding", "calories": 120})
+    llm = FakeLLM([LLMResponse(data={"name": "Vemondo Mushroom Medaglioni", "calories": 221})])
+    messenger = FakeMessenger()
+
+    handle_message(
+        "/savefood Vemondo Mushroom Medaglioni: 221 kcal", chat_id="c1",
+        llm=llm, conn=conn, messenger=messenger,
+    )
+
+    assert "already have" not in messenger.sent[-1].lower()
+    assert "Vemondo Mushroom Medaglioni" in foods.names(conn)
+
+
+def test_checkfood_still_finds_single_word_match(conn):
+    """The lenient /checkfood lookup keeps matching on a single shared word — only the
+    save-time duplicate warning needed the stricter two-word threshold."""
+    from xirtun.storage import foods
+    foods.add(conn, {"name": "Vemondo protein pudding", "calories": 120})
+    messenger = FakeMessenger()
+    handle_message("/checkfood vemondo", chat_id="c1", llm=FakeLLM(), conn=conn, messenger=messenger)
+    assert "Vemondo protein pudding" in messenger.sent[-1]
 
 
 def test_meal_item_stores_sugar(conn):

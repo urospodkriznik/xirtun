@@ -79,7 +79,9 @@ def _tokens(text: str) -> set[str]:
 
 def search(conn: sqlite3.Connection, query: str) -> list[str]:
     """Saved food names that share a significant word with `query` (excluding an exact
-    name match). Used for duplicate detection and /checkfood."""
+    name match). Used for /checkfood and /delfood's forgiving "did you mean" suggestion
+    — a single shared word is enough since it's just a suggestion behind a confirmation
+    (for /delfood) or a lookup result (for /checkfood), not an interrupting warning."""
     wanted = _tokens(query)
     matches = []
     for row in conn.execute("SELECT name FROM known_foods"):
@@ -87,5 +89,23 @@ def search(conn: sqlite3.Connection, query: str) -> list[str]:
         if name.lower() == query.lower():
             continue
         if wanted & _tokens(name):
+            matches.append(name)
+    return matches
+
+
+def likely_duplicate(conn: sqlite3.Connection, query: str) -> list[str]:
+    """Saved food names that share at least two significant words with `query`
+    (excluding an exact name match). Used ONLY for the save-time "you already have X"
+    warning, where precision matters: a single shared word is too weak a signal there,
+    since it's commonly just a shared store brand ("Vemondo") or category word ("milk")
+    rather than a sign the two products are actually the same thing — and unlike
+    /checkfood or /delfood, this warning interrupts every save that trips it."""
+    wanted = _tokens(query)
+    matches = []
+    for row in conn.execute("SELECT name FROM known_foods"):
+        name = row["name"]
+        if name.lower() == query.lower():
+            continue
+        if len(wanted & _tokens(name)) >= 2:
             matches.append(name)
     return matches

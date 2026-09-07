@@ -67,7 +67,9 @@ def _tokens(text: str) -> set[str]:
 
 
 def search(conn: sqlite3.Connection, query: str) -> list[str]:
-    """Saved meal names that share a significant word with `query` (excluding exact match)."""
+    """Saved meal names that share a significant word with `query` (excluding exact
+    match). Used for /delmeal's forgiving "did you mean" suggestion — a single shared
+    word is enough since it's just a suggestion behind a yes/no confirmation."""
     wanted = _tokens(query)
     matches = []
     for row in conn.execute("SELECT name FROM custom_meals"):

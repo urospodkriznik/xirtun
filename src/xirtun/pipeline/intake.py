@@ -367,7 +367,7 @@ def handle_message(
                 diet_path=diet_path, now=now,
             )
             return
-        if session.kind in {"meal", "symptom", "exercise"} and text.strip().lower() in CANCEL_WORDS:
+        if session.kind in {"meal", "symptom", "exercise"} and text.strip().lower().lstrip("/") in CANCEL_WORDS:
             sessions.clear(conn, chat_id)
             messenger.send("Cancelled — nothing logged.")
             return
@@ -855,7 +855,7 @@ def _process_food(
         return
 
     # A similarly-named food exists -> ask whether it's the same item.
-    similar = foods.search(conn, food["name"])
+    similar = foods.likely_duplicate(conn, food["name"])
     if similar:
         sessions.upsert(
             conn, chat_id, "food_confirm",

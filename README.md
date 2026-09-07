@@ -32,6 +32,11 @@ your data in plain files you own, and talks to no one but you and the model prov
 - **Clarifying questions** — if a description is too vague to estimate, it asks one
   short follow-up instead of guessing. Send `cancel` (or `nevermind`/`stop`) any time
   to drop it instead of answering.
+- **Every command that takes input works two ways** — send it with text in the same
+  message (`/addmeal 200g chicken and rice`), or send it bare and it prompts you with
+  a template (handy for tapping a command straight from Telegram's menu). `/cancel`
+  (or `cancel`) backs out of a prompt or a follow-up question at any point; sending a
+  different command instead just switches to that one.
 - **Smart timing** — infers *when* something happened ("lunch", "this morning",
   "yesterday") in your timezone, separate from when you logged it. One message can
   describe several eating occasions at different times.
@@ -140,8 +145,8 @@ your data in plain files you own, and talks to no one but you and the model prov
 | Command | What it does |
 |---|---|
 | *(just type or speak)* | Log a meal/symptom/workout, add a note, ask for a shopping list, or save a food — all in plain language |
-| `/addmeal` | Start a fresh multi-message meal entry |
-| `/addworkout` | Log a workout |
+| `/addmeal <text>` | Log a meal — sent bare, prompts for what you ate |
+| `/addworkout <text>` | Log a workout — sent bare, prompts for what you did |
 | `/addsymptom <text>` | Log how you feel |
 | `/addnote <text>` | Save a note or goal for your weekly review |
 | `/undo` | Remove your last logged entry (asks to confirm, shows what it'll delete) |
@@ -262,7 +267,7 @@ it.
 ## Testing
 
 ```bash
-uv run pytest        # ~210 tests, fully offline
+uv run pytest        # ~220 tests, fully offline
 uv run ruff check    # lint
 ```
 
