@@ -649,7 +649,7 @@ def _process_meal(
     draft = structure_meal(
         llm, text, now=now,
         known_foods=foods.for_prompt(conn),
-        custom_meal_names=custom_meals.names(conn),
+        saved_meals=custom_meals.all_rows(conn),
     )
 
     if draft["needs_clarification"]:
@@ -658,7 +658,7 @@ def _process_meal(
         return
 
     for meal in draft["meals"]:
-        _expand_custom_meals(conn, meal)
+        _expand_custom_meals(conn, meal, text)
         _apply_known_foods(conn, meal)
         diary.save_meal(conn, text, meal, now=now)
     messenger.send(format_ack(draft["meals"]))
@@ -1035,13 +1035,24 @@ def _scale_item(item: dict[str, Any], factor: float) -> dict[str, Any]:
     return scaled
 
 
-def _expand_custom_meals(conn: sqlite3.Connection, meal: dict[str, Any]) -> None:
+def _expand_custom_meals(conn: sqlite3.Connection, meal: dict[str, Any], text: str) -> None:
     """Replace any item naming a saved custom meal with that meal's stored items,
-    scaled by `portion` when the user ate only part of it (1 = full portion)."""
+    scaled by `portion` when the user ate only part of it (1 = full portion).
+
+    A match the user's own words don't support is ignored: expanding a recipe adds
+    several foods at once, so a loose match ("cereals" pulling in "breakfast cereals")
+    doesn't merely mis-estimate an item, it invents a meal. Better to keep the model's
+    plain item than to log food that was never eaten.
+    """
     expanded: list[dict[str, Any]] = []
     for item in meal["items"]:
         name = item.get("custom_meal")
         recipe = custom_meals.find_by_name(conn, name) if name else None
+        if recipe and not custom_meals.name_supported_by(recipe["name"], text):
+            logger.warning(
+                "ignoring saved-meal match %r — not named in %r", recipe["name"], text
+            )
+            recipe = None
         if recipe:
             factor = item.get("portion") or 1.0
             recipe_items = recipe["items"]

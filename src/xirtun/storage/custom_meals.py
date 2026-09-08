@@ -7,6 +7,7 @@ instead of re-listing every ingredient each time.
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 from datetime import datetime
 from typing import Any
@@ -64,6 +65,29 @@ def delete(conn: sqlite3.Connection, name: str) -> bool:
 
 def _tokens(text: str) -> set[str]:
     return {word.rstrip("s") for word in text.lower().split() if len(word) >= 4}
+
+
+def _words(text: str) -> set[str]:
+    """Like `_tokens`, but punctuation-stripped — matching a saved name against free
+    text has to survive "cereals," and "oat-milk"."""
+    return {word.rstrip("s") for word in re.sub(r"[^a-z0-9]+", " ", text.lower()).split()
+            if len(word) >= 4}
+
+
+def name_supported_by(name: str, text: str) -> bool:
+    """Did the user actually name this saved meal?
+
+    Expanding a saved meal replaces one word with a whole recipe, so a wrong match adds
+    food the user never ate — "iat cereals" once pulled in the entire "breakfast
+    cereals" recipe (muesli, chocolate, a second oat milk) on the strength of the word
+    "cereals" alone, nearly doubling the meal. So every significant word of the saved
+    name must appear in the text, not just one: a saved meal is used when it is named,
+    and otherwise the ingredients are estimated normally.
+    """
+    wanted = _words(name)
+    if not wanted:                      # a name too short to tokenise ("abc")
+        return name.strip().lower() in text.lower()
+    return wanted <= _words(text)
 
 
 def search(conn: sqlite3.Connection, query: str) -> list[str]:

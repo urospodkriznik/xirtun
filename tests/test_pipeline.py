@@ -1192,3 +1192,128 @@ def test_structure_prompt_requires_scaling_by_stated_portions():
     assert "TOTAL amount eaten" in STRUCTURE_SYSTEM
     assert "Never collapse a stated multiple" in STRUCTURE_SYSTEM
     assert "the beer is still one small glass" in STRUCTURE_SYSTEM   # scale only what's counted
+
+
+def test_unnamed_saved_meal_is_not_expanded_into_the_diary(conn):
+    """Belt to the prompt's braces: even if the model insists on a saved meal the user
+    never named, the recipe must not be expanded — that adds several foods at once, so
+    the diary ends up holding a meal that was never eaten."""
+    from xirtun.storage import custom_meals
+
+    custom_meals.add(conn, "breakfast cereals", [
+        {"name": "muesli with nuts", "quantity_g": 75, "calories": 300},
+        {"name": "chocolate", "quantity_g": 10, "calories": 55},
+    ])
+    matched = {"needs_clarification": False, "meals": [_meal([
+        {"name": "cereals", "custom_meal": "breakfast cereals", "calories": 190},
+        {"name": "banana", "quantity_g": 360, "calories": 320},
+    ])]}
+    # Both the first answer and the retry keep the bad match, so the guard has to hold.
+    llm = FakeLLM([
+        LLMResponse(data={"intent": "meal"}),
+        LLMResponse(data=matched), LLMResponse(data=matched),
+    ])
+    messenger = FakeMessenger()
+
+    handle_message("0.9l smoothie of 2 big bananas, iat cereals", chat_id="c1",
+                   llm=llm, conn=conn, messenger=messenger)
+
+    ack = messenger.sent[-1]
+    assert "chocolate" not in ack and "muesli" not in ack   # never eaten, never logged
+    assert "banana" in ack
+    names = [r["name"] for r in conn.execute("SELECT name FROM meal_items")]
+    assert "chocolate" not in names
+
+
+def test_named_saved_meal_still_expands(conn):
+    from xirtun.storage import custom_meals
+
+    custom_meals.add(conn, "breakfast cereals", [
+        {"name": "muesli with nuts", "quantity_g": 75, "calories": 300},
+        {"name": "oat milk", "quantity_g": 500, "calories": 230},
+    ])
+    llm = FakeLLM([
+        LLMResponse(data={"intent": "meal"}),
+        LLMResponse(data={"needs_clarification": False, "meals": [_meal([
+            {"name": "breakfast cereals", "custom_meal": "breakfast cereals"},
+        ])]}),
+    ])
+    messenger = FakeMessenger()
+
+    handle_message("I had my breakfast cereals", chat_id="c1", llm=llm, conn=conn,
+                   messenger=messenger)
+
+    assert "muesli with nuts" in messenger.sent[-1]
+    assert "oat milk" in messenger.sent[-1]
+
+
+def test_structure_meal_retries_a_saved_meal_the_user_never_named():
+    bad = {"needs_clarification": False, "meals": [_meal([
+        {"name": "cereals", "custom_meal": "breakfast cereals"},
+    ])]}
+    good = {"needs_clarification": False, "meals": [_meal([
+        {"name": "oat cereals", "quantity_g": 50, "calories": 190, "protein_g": 6},
+    ])]}
+    llm = FakeLLM([LLMResponse(data=bad), LLMResponse(data=good)])
+
+    out = structure_meal(llm, "smoothie with iat cereals",
+                         saved_meals=[{"name": "breakfast cereals", "items": []}])
+
+    assert out["meals"][0]["items"][0]["name"] == "oat cereals"
+    assert "did not name" in llm.calls[1]["messages"][-1]["content"]
+
+
+_RECIPE = [{"name": "muesli with nuts", "quantity_g": 75, "calories": 300},
+           {"name": "oat milk", "quantity_g": 500, "calories": 230}]
+_SAVED = [{"name": "breakfast cereals", "items": _RECIPE}]
+
+
+def test_saved_meal_contents_are_shown_only_when_the_meal_is_named():
+    """The model can't honour "without the muesli" while it only knows the meal's NAME.
+    Its contents are inlined when the message names it — and only then, so a long recipe
+    book doesn't ride along on every meal logged."""
+    data = {"needs_clarification": False, "meals": [_meal([{"name": "x", "calories": 10}])]}
+
+    llm = FakeLLM([LLMResponse(data=data)])
+    structure_meal(llm, "breakfast cereals without the muesli", saved_meals=_SAVED)
+    prompt = llm.calls[0]["messages"][-1]["content"]
+    assert "breakfast cereals = muesli with nuts 75g, oat milk 500g" in prompt
+
+    llm = FakeLLM([LLMResponse(data=data)])
+    structure_meal(llm, "a bowl of porridge", saved_meals=_SAVED)
+    prompt = llm.calls[0]["messages"][-1]["content"]
+    assert "- breakfast cereals" in prompt          # the name is still offered
+    assert "muesli with nuts 75g" not in prompt     # but not its contents
+
+
+def test_structure_meal_retries_when_a_named_saved_meal_was_modified():
+    """`portion` scales the whole recipe; it can't drop an ingredient. Expanding here
+    would log the muesli that was explicitly excluded AND count the milk twice."""
+    marked = {"needs_clarification": False, "meals": [_meal([
+        {"name": "breakfast cereals", "custom_meal": "breakfast cereals"},
+        {"name": "milk", "quantity_g": 400, "calories": 180},
+    ])]}
+    itemized = {"needs_clarification": False, "meals": [_meal([
+        {"name": "oat milk", "quantity_g": 400, "calories": 180},
+    ])]}
+    llm = FakeLLM([LLMResponse(data=marked), LLMResponse(data=itemized)])
+
+    out = structure_meal(llm, "breakfast cereals with less milk (0.4l), without musli",
+                         saved_meals=_SAVED)
+
+    assert all(not i.get("custom_meal") for i in out["meals"][0]["items"])
+    assert "CHANGING the saved meal" in llm.calls[1]["messages"][-1]["content"]
+
+
+def test_adding_to_a_saved_meal_is_not_treated_as_modifying_it():
+    """"cereals and a banana" is representable as the recipe plus one item, so it must
+    not burn a retry — only removals and amount changes do."""
+    data = {"needs_clarification": False, "meals": [_meal([
+        {"name": "breakfast cereals", "custom_meal": "breakfast cereals"},
+        {"name": "banana", "quantity_g": 120, "calories": 105},
+    ])]}
+    llm = FakeLLM([LLMResponse(data=data)])
+
+    structure_meal(llm, "breakfast cereals and a banana", saved_meals=_SAVED)
+
+    assert len(llm.calls) == 1

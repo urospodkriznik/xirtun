@@ -12,6 +12,7 @@ from typing import Any
 
 from xirtun.llm.base import LLMClient
 from xirtun.pipeline.models import MealExtraction
+from xirtun.storage import custom_meals
 
 # Instructs the model to decompose meals into ingredients, estimate nutrition, tag
 # allergens/sensitivities, infer when each meal occurred, and ask for clarification
@@ -51,6 +52,25 @@ STRUCTURE_SYSTEM = (
     "NOT itemize it — it will be expanded from the saved recipe. If they ate only part "
     "of it, set `portion` to the fraction eaten (0.5 for 'half', 0.67 for 'two thirds', "
     "2 for 'a double portion'); leave it null for a full/normal portion.\n"
+    "- Set `custom_meal` ONLY when the user has NAMED that saved meal — every "
+    "significant word of the saved name should be there in what they wrote. A shared "
+    "generic word is NOT a match: 'oat cereals' does NOT mean a saved 'breakfast "
+    "cereals', and a typo you can't read ('iat cereals') is not a licence to reach for "
+    "the nearest saved name. Expanding a recipe adds SEVERAL foods at once, so a wrong "
+    "match doesn't just mis-estimate one item, it logs a meal the user never ate — "
+    "when unsure, leave `custom_meal` null and estimate the ingredients normally.\n"
+    "- Never do both: if you set `custom_meal`, don't ALSO list that recipe's "
+    "ingredients (or the user's own words for them) as separate items, or everything "
+    "in it gets counted twice.\n"
+    "- If the user NAMES a saved meal but CHANGES it — leaves an ingredient out, swaps "
+    "one, or alters an amount ('breakfast cereals but with less milk (0.4l), without "
+    "musli and additional banana') — do NOT set `custom_meal`. Itemize the adjusted "
+    "meal yourself: start from the saved contents shown below the meal list, drop what "
+    "they removed, use their amount where they gave one, and add what they added. "
+    "Setting `custom_meal` there logs the saved version unchanged, so the removed "
+    "ingredient still gets counted and their replacement amount is added on top of the "
+    "original one. `portion` scales the WHOLE meal ('half my breakfast cereals') and "
+    "cannot express a change to a single ingredient.\n"
     "- Tag each item with likely SENSITIVITY/ALLERGEN markers (dairy, gluten, soy, "
     "egg, nuts, shellfish, nightshade, histamine, caffeine, alcohol, fodmap) plus "
     "notable attributes ('iron-rich', 'fried', 'processed').\n"
@@ -86,7 +106,7 @@ def structure_meal(
     *,
     now: datetime | None = None,
     known_foods: list[dict[str, Any]] | None = None,
-    custom_meal_names: list[str] | None = None,
+    saved_meals: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     now = now or datetime.now().astimezone()
     known = ""
@@ -98,12 +118,29 @@ def structure_meal(
                 line += f" (whole package = {round(food['package_g'])}g)"
             lines.append(line)
         known = "\n\nMy known foods (set known_food to the exact name shown):\n" + "\n".join(lines)
-    if custom_meal_names:
+    if saved_meals:
         known += (
             "\n\nMy saved custom meals (if I say I ate one, set `custom_meal` to its "
             "exact name as a single item; don't itemize it):\n"
-            + "\n".join(f"- {name}" for name in custom_meal_names)
+            + "\n".join(f"- {m['name']}" for m in saved_meals)
         )
+        # Spell out the contents of any saved meal the message actually names — the
+        # model can't honour "without the muesli" while it only knows the meal's name.
+        # Only the named ones, so a long recipe book doesn't ride along on every log.
+        named = [m for m in saved_meals if custom_meals.name_supported_by(m["name"], text)]
+        if named:
+            known += (
+                "\n\nWhat's in the saved meal(s) I seem to be naming — use this if I "
+                "changed anything about them:\n"
+                + "\n".join(
+                    f"- {m['name']} = " + ", ".join(
+                        f"{i.get('name')} {round(i['quantity_g'])}g" if i.get("quantity_g")
+                        else str(i.get("name"))
+                        for i in (m.get("items") or [])
+                    )
+                    for m in named
+                )
+            )
     user = (
         f"Current date and time: {now:%Y-%m-%d %H:%M %A} ({now:%Z}, UTC{now:%z}).\n\n"
         f"What I ate:\n{text}{known}"
@@ -115,30 +152,86 @@ def structure_meal(
     response = llm.complete(messages, schema=MealExtraction)
     data = response.data
 
-    # A macro estimate that can't produce its own calorie figure is a slip, not a big
-    # meal — most often the portion size written into a macro field (a 240g falafel
-    # logged as 240g of fat). One corrective retry costs a cheap call and stops the row
-    # from skewing every average that follows; if the retry is no better we keep what we
-    # have rather than block the user's log on it.
-    impossible = impossible_items(data)
-    if impossible:
+    # Two ways this output can be wrong in a manner no later step can detect, both worth
+    # one cheap corrective call: macros that can't produce their own calorie figure
+    # (usually a portion size in a macro field), and a saved meal matched to words the
+    # user never wrote (which silently adds a whole recipe). If the retry is no better we
+    # keep what we have rather than block the user's log on it.
+    if _problems(data, text):
         retry = llm.complete(
-            messages + [{
-                "role": "user",
-                "content": (
-                    "Your estimate is arithmetically impossible for: "
-                    + "; ".join(impossible)
-                    + ". Protein and carbs are 4 kcal per gram and fat is 9, so those "
-                    "macros imply far more energy than the calorie figure you gave. "
-                    "Check whether a portion size ended up in a macro field. Re-estimate "
-                    "the whole message, keeping everything else the same."
-                ),
-            }],
+            messages + [{"role": "user", "content": _correction_request(data, text)}],
             schema=MealExtraction,
         )
-        if retry.data and not impossible_items(retry.data):
+        if retry.data and not _problems(retry.data, text):
             return retry.data
     return data
+
+
+def _problems(data: dict[str, Any] | None, text: str) -> list[str]:
+    return impossible_items(data) + unnamed_custom_meals(data, text) + altered_custom_meals(data, text)
+
+
+# Words that signal a saved meal was changed in a way `portion` can't express. Only
+# removals and amount changes: an ADDITION ("cereals and a banana") is representable —
+# the recipe plus a separate item — so it isn't worth a retry.
+_ALTERATION_WORDS = ("without", "minus", "skip", "instead of", "leave out", "less")
+
+
+def altered_custom_meals(data: dict[str, Any] | None, text: str) -> list[str]:
+    """Saved meals the model marked for wholesale expansion while the user was plainly
+    changing them. Expanding there logs the ingredient they removed and double-counts
+    the one they re-specified."""
+    if not data:
+        return []
+    lowered = text.lower()
+    if not any(word in lowered for word in _ALTERATION_WORDS):
+        return []
+    return [
+        name for meal in (data.get("meals") or [])
+        for item in (meal.get("items") or [])
+        if (name := item.get("custom_meal"))
+    ]
+
+
+def _correction_request(data: dict[str, Any] | None, text: str) -> str:
+    parts = []
+    if impossible := impossible_items(data):
+        parts.append(
+            "Your estimate is arithmetically impossible for: " + "; ".join(impossible)
+            + ". Protein and carbs are 4 kcal per gram and fat is 9, so those macros "
+            "imply far more energy than the calorie figure you gave. Check whether a "
+            "portion size ended up in a macro field."
+        )
+    if unnamed := unnamed_custom_meals(data, text):
+        parts.append(
+            "You matched saved meal(s) the user did not name: " + "; ".join(unnamed)
+            + ". A shared generic word is not a match, and neither is a typo that "
+            "resembles one. Estimate those ingredients normally instead, and don't list "
+            "a recipe's contents twice."
+        )
+    if altered := altered_custom_meals(data, text):
+        parts.append(
+            "The user is CHANGING the saved meal(s) they named: " + "; ".join(altered)
+            + ". Setting `custom_meal` logs the saved version unchanged, so what they "
+            "removed still counts and what they re-specified is added on top. Drop "
+            "`custom_meal` and itemize the adjusted meal from the saved contents shown."
+        )
+    return " ".join(parts) + " Re-estimate the whole message, keeping everything else the same."
+
+
+def unnamed_custom_meals(data: dict[str, Any] | None, text: str) -> list[str]:
+    """Saved meals the model matched that the user's own words don't support.
+
+    Expanding a saved meal swaps one word for a whole recipe, so this error adds food
+    that was never eaten — and it looks entirely plausible in the diary afterwards.
+    """
+    if not data:
+        return []
+    return [
+        name for meal in (data.get("meals") or [])
+        for item in (meal.get("items") or [])
+        if (name := item.get("custom_meal")) and not custom_meals.name_supported_by(name, text)
+    ]
 
 
 def impossible_items(data: dict[str, Any] | None) -> list[str]:
