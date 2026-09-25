@@ -1317,3 +1317,19 @@ def test_adding_to_a_saved_meal_is_not_treated_as_modifying_it():
     structure_meal(llm, "breakfast cereals and a banana", saved_meals=_SAVED)
 
     assert len(llm.calls) == 1
+
+
+def test_structure_prompt_budgets_a_shared_vessel():
+    """Measured against the real API: each component of "a plate of mix of vegan
+    chicken, sweet potato, tomato sauce, carrot and mushrooms" was sized as if served
+    alone, totalling 660g of food on one plate (and the saved vegan chicken defaulting
+    to its full 200g package). With the budget rule the same model gives 400g."""
+    from xirtun.pipeline.structure import STRUCTURE_SYSTEM
+
+    assert "ONE VESSEL IS ONE BUDGET" in STRUCTURE_SYSTEM
+    assert "smaller shares of the same total" in STRUCTURE_SYSTEM
+    assert "package size is NOT a default portion" in STRUCTURE_SYSTEM
+    # The budget must not cancel the rule that a stated amount wins — the two pull in
+    # opposite directions and the precedence has to stay explicit.
+    assert "budget applies ONLY where the user gave no amount" in STRUCTURE_SYSTEM
+    assert "Never collapse a stated multiple" in STRUCTURE_SYSTEM

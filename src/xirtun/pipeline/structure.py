@@ -94,6 +94,26 @@ STRUCTURE_SYSTEM = (
     "- Sanity-check before answering: would this quantity plausibly leave that person "
     "full? Restating a big meal as one modest serving is the most damaging error you can "
     "make here, because it silently understates every total that follows.\n"
+    # The mirror of the problem above: with no amounts given, each component of a mixed
+    # plate was being sized as if it were served alone, so naming more ingredients
+    # inflated the meal. "a plate of mix of vegan chicken, sweet potato, tomato sauce,
+    # carrot and mushrooms" came out at 660g of food — more than fits on a plate.
+    "- ONE VESSEL IS ONE BUDGET. When foods are served together in a single named "
+    "vessel — 'a plate of X, Y and Z', 'a bowl of...', 'a wrap with...' — and no amounts "
+    "are given, they SHARE that vessel. They are not each a standalone serving. Decide "
+    "the TOTAL that realistically fits, then divide it between the components:\n"
+    "    · a dinner plate of mixed food: ~350-450g in total ('big', 'heaped', 'piled': "
+    "~550-650g)\n"
+    "    · a bowl: ~300-400g · a small side plate: ~150-200g · a wrap/sandwich: "
+    "~200-300g\n"
+    "  Naming MORE components means smaller shares of the same total, not a bigger "
+    "total. Five things on one plate are five modest helpings, and the sauce or dressing "
+    "among them is a spoonful or two, not a serving in its own right.\n"
+    "- A saved food's package size is NOT a default portion. Use a realistic helping "
+    "unless the user actually says they ate the whole package, tub or container.\n"
+    "- This budget applies ONLY where the user gave no amount. An explicit weight, a "
+    "stated count of portions, or emphasis about how much they ate always wins over it — "
+    "someone who says they had three plates ate three plates.\n"
     "Estimates are rough (±20-30% is fine), but that tolerance is for the nutrition of a "
     "known amount — it is NOT licence to guess the amount itself. Ask at most one "
     "question at a time. Respond using the provided schema."
