@@ -79,6 +79,45 @@ def test_today_report_shows_the_whole_target_before_any_meal(conn):
     assert f"{formula['calories']} kcal left" in out
 
 
+def test_today_report_falls_back_to_yesterday_when_nothing_logged_today(conn):
+    targets.write_metrics(conn, dict(FULL_METRICS))
+    targets.set_calibrated(
+        conn, calories=2000, protein_min_g=100, protein_max_g=120, rationale="baseline",
+    )
+    yesterday = NOW - timedelta(days=1)
+    diary.save_meal(conn, "dinner", _meal(
+        [{"name": "lentil curry", "calories": 700, "protein_g": 30}],
+        yesterday.replace(hour=19).isoformat(),
+    ))
+
+    out = reports.today_report(conn, NOW)
+    assert "No meals logged today yet" in out
+    assert "Yesterday (Mon 22 Jun)" in out
+    assert "lentil curry" in out and "700" in out
+    assert "700 kcal" in out and "1300 kcal short" in out   # judged against the target
+    assert "/day" not in out                                # single day, not an average
+    assert "left" not in out                                # nothing is "still to eat"
+
+
+def test_today_report_prefers_today_over_yesterday(conn):
+    diary.save_meal(conn, "old", _meal(
+        [{"name": "yesterday toast", "calories": 100}], (NOW - timedelta(days=1)).isoformat(),
+    ))
+    diary.save_meal(conn, "new", _meal(
+        [{"name": "todays eggs", "calories": 200}], NOW.replace(hour=8).isoformat(),
+    ))
+    out = reports.today_report(conn, NOW)
+    assert "todays eggs" in out and "yesterday toast" not in out
+
+
+def test_today_report_ignores_meals_older_than_yesterday(conn):
+    diary.save_meal(conn, "old", _meal(
+        [{"name": "ancient toast", "calories": 100}], (NOW - timedelta(days=2)).isoformat(),
+    ))
+    out = reports.today_report(conn, NOW)
+    assert "No meals logged today yet." in out and "ancient toast" not in out
+
+
 def test_today_report_omits_remaining_without_a_target(conn):
     diary.save_meal(conn, "x", _meal([{"name": "banana", "calories": 100}], NOW.isoformat()))
     out = reports.today_report(conn, NOW)

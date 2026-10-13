@@ -102,45 +102,70 @@ def _remaining_lines(conn: sqlite3.Connection, eaten: dict[str, float]) -> list[
     ]
 
 
+def _meals_summary(label: str, meals: list[dict[str, Any]], t: dict[str, float]) -> list[str]:
+    """'<label> — N meal(s), ~X kcal (...):' followed by one line per meal."""
+    lines = [
+        f"{label} — {len(meals)} meal(s), ~{round(t['calories'])} kcal "
+        f"({round(t['protein_g'])}g protein, {round(t['fat_g'])}g fat, "
+        f"{round(t['carbs_g'])}g carbs incl. {round(t['sugar_g'])}g sugar, "
+        f"{round(t['fiber_g'])}g fibre, {round(t['sodium_mg'])}mg sodium):"
+    ]
+    for meal in meals:
+        names = ", ".join(item["name"] for item in meal["items"])
+        lines.append(f"- {names}")
+    return lines
+
+
 def today_report(conn: sqlite3.Connection, now: datetime) -> str:
-    """Today's meals and totals, followed by what's still left of the day's target."""
+    """Today's meals and totals, followed by what's still left of the day's target.
+
+    If nothing is logged yet today (a fresh morning), a page of zeros says nothing —
+    so when yesterday has meals, report on yesterday instead, clearly labelled."""
     start = now.replace(hour=0, minute=0, second=0, microsecond=0)
     meals = diary.meals_since(conn, start.isoformat())
     t = _totals(meals)
 
     if meals:
-        lines = [
-            f"Today — {len(meals)} meal(s), ~{round(t['calories'])} kcal "
-            f"({round(t['protein_g'])}g protein, {round(t['fat_g'])}g fat, "
-            f"{round(t['carbs_g'])}g carbs incl. {round(t['sugar_g'])}g sugar, "
-            f"{round(t['fiber_g'])}g fibre, {round(t['sodium_mg'])}mg sodium):"
-        ]
-        for meal in meals:
-            names = ", ".join(item["name"] for item in meal["items"])
-            lines.append(f"- {names}")
-    else:
-        # Still worth answering: with nothing eaten, the whole target is what's left.
-        lines = ["No meals logged today yet."]
+        lines = _meals_summary("Today", meals, t)
+        remaining = _remaining_lines(conn, t)
+        return "\n".join(lines + ["", *remaining] if remaining else lines)
 
+    yesterday_start = (start - timedelta(hours=12)).replace(hour=0, minute=0, second=0, microsecond=0)
+    yesterday = diary.meals_since(conn, yesterday_start.isoformat(), start.isoformat())
+    if yesterday:
+        yt = _totals(yesterday)
+        lines = [
+            "No meals logged today yet. Here's yesterday instead:",
+            "",
+            *_meals_summary(f"Yesterday ({yesterday_start:%a %d %b})", yesterday, yt),
+            "",
+            *_average_lines(conn, yt, 1, header="Yesterday", per_day=False),
+        ]
+        return "\n".join(lines)
+
+    # Nothing yesterday either: with nothing eaten, the whole target is what's left.
     remaining = _remaining_lines(conn, t)
+    lines = ["No meals logged today yet."]
     return "\n".join(lines + ["", *remaining] if remaining else lines)
 
 
 def _average_line(
-    label: str, avg: float, lo: float | None = None, hi: float | None = None, unit: str = "g"
+    label: str, avg: float, lo: float | None = None, hi: float | None = None, unit: str = "g",
+    per_day: bool = True,
 ) -> str:
     """A daily average and how it sits against its target band, e.g.
     'Protein: ~90g/day of 112–128g → 22g/day short'. A point target has lo == hi, a
     cap has no lo, a floor has no hi; with no target at all (both None) the line is
     just the average."""
-    line = f"- {label}: ~{_amount(avg, unit)}/day"
+    per = "/day" if per_day else ""
+    line = f"- {label}: ~{_amount(avg, unit)}{per}"
     if lo is None and hi is None:
         return line
 
     if lo is not None and avg < lo:
-        verdict = f"{_amount(lo - avg, unit)}/day short"
+        verdict = f"{_amount(lo - avg, unit)}{per} short"
     elif hi is not None and avg > hi:
-        verdict = f"{_amount(avg - hi, unit)}/day over"
+        verdict = f"{_amount(avg - hi, unit)}{per} over"
     else:
         verdict = "on target"
     return f"{line} of {_band_text(lo, hi, unit)} → {verdict}"
@@ -158,7 +183,10 @@ _NUTRIENTS = (
 )
 
 
-def _average_lines(conn: sqlite3.Connection, avg: dict[str, float], days_logged: int) -> list[str]:
+def _average_lines(
+    conn: sqlite3.Connection, avg: dict[str, float], days_logged: int,
+    *, header: str | None = None, per_day: bool = True,
+) -> list[str]:
     """Daily averages measured against the target — the weekly counterpart of
     ``_remaining_lines``. Without a target the averages are still worth showing, so
     the lines come back bare rather than not at all."""
@@ -176,12 +204,13 @@ def _average_lines(conn: sqlite3.Connection, avg: dict[str, float], days_logged:
             "sodium_mg": (None, g["sodium_max_mg"]),
         }
 
-    header = f"Daily average across the {days_logged} day(s) you logged"
+    if header is None:
+        header = f"Daily average across the {days_logged} day(s) you logged"
     header += f", vs the {target['source']} target:" if target else ":"
     lines = [header]
     for label, key, unit in _NUTRIENTS:
         lo, hi = bands.get(key, (None, None))
-        lines.append(_average_line(label, avg[key], lo, hi, unit))
+        lines.append(_average_line(label, avg[key], lo, hi, unit, per_day))
     if target is not None:
         lines.append(
             "(Fat, carbs, sugar and fibre are general guidelines derived from your "

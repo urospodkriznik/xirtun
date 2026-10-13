@@ -117,11 +117,15 @@ def save_exercise(
     return cursor.lastrowid
 
 
-def meals_since(conn: sqlite3.Connection, since_iso: str) -> list[dict[str, Any]]:
-    """Meals (with their items) eaten on/after `since_iso`, oldest first."""
+def meals_since(
+    conn: sqlite3.Connection, since_iso: str, until_iso: str | None = None,
+) -> list[dict[str, Any]]:
+    """Meals (with their items) eaten on/after `since_iso` (and before `until_iso`, if
+    given), oldest first."""
     rows = conn.execute(
-        "SELECT id, occurred_at FROM meals WHERE occurred_at >= ? ORDER BY occurred_at",
-        (since_iso,),
+        "SELECT id, occurred_at FROM meals WHERE occurred_at >= ? "
+        "AND (? IS NULL OR occurred_at < ?) ORDER BY occurred_at",
+        (since_iso, until_iso, until_iso),
     ).fetchall()
     result = []
     for r in rows:

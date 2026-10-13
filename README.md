@@ -150,7 +150,7 @@ your data in plain files you own, and talks to no one but you and the model prov
 | `/addsymptom <text>` | Log how you feel |
 | `/addnote <text>` | Save a note or goal for your weekly review |
 | `/undo` | Remove your last logged entry (asks to confirm, shows what it'll delete) |
-| `/today` | Today's meals and totals, plus what's still left to eat per nutrient |
+| `/today` | Today's meals and totals, plus what's still left to eat per nutrient — on a fresh day with nothing logged yet, it shows yesterday's meals and how they compared to your target instead of zeros |
 | `/week` | The past 7 days: totals, plus per-day averages and how far each one sits from the target |
 | `/lastmeals` · `/lastsymptoms` · `/lastworkouts` · `/lastnotes` | Your last 3 of each, with times — to check what you've already logged |
 | `/shop` | Suggest a shopping list |
