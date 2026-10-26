@@ -45,7 +45,7 @@ def test_voice_update_transcribed(monkeypatch):
     from xirtun.messaging.telegram import TelegramMessenger
 
     messenger = TelegramMessenger(
-        token="t", chat_id="1", conn=None, transcribe=lambda data, mime: "two eggs and toast"
+        token="t", chat_id="4242", conn=None, transcribe=lambda data, mime: "two eggs and toast"
     )
     monkeypatch.setattr(messenger, "_download_file", lambda file_id: b"audio")
     update = {
@@ -64,7 +64,29 @@ def test_voice_update_transcribed(monkeypatch):
 def test_voice_without_transcriber_ignored():
     from xirtun.messaging.telegram import TelegramMessenger
 
-    messenger = TelegramMessenger(token="t", chat_id="1", conn=None)  # no transcriber
+    messenger = TelegramMessenger(token="t", chat_id="4242", conn=None)  # no transcriber
     update = {"update_id": 1, "message": {"date": 1_700_000_000, "chat": {"id": 4242},
                                           "voice": {"file_id": "abc"}}}
     assert messenger._to_message(update) is None
+
+
+def test_text_from_another_chat_ignored():
+    from xirtun.messaging.telegram import TelegramMessenger
+
+    messenger = TelegramMessenger(token="t", chat_id="1", conn=None)
+    assert messenger._to_message(SAMPLE_UPDATE) is None   # sent from chat 4242
+
+
+def test_voice_from_another_chat_not_transcribed(monkeypatch):
+    from xirtun.messaging.telegram import TelegramMessenger
+
+    calls = []
+    messenger = TelegramMessenger(
+        token="t", chat_id="1", conn=None, transcribe=lambda data, mime: calls.append(mime) or "x"
+    )
+    monkeypatch.setattr(messenger, "_download_file", lambda file_id: b"audio")
+    update = {"update_id": 1, "message": {"date": 1_700_000_000, "chat": {"id": 4242},
+                                          "voice": {"file_id": "abc"}}}
+
+    assert messenger._to_message(update) is None
+    assert calls == []                                    # no transcription spent on a stranger

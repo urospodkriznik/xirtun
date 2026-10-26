@@ -7,7 +7,8 @@
 ## Guiding constraints
 
 - Raw Python, no agent frameworks. The author owns the agent loop.
-- Single user. No auth, no multi-tenancy.
+- Single user per instance. No auth, no multi-tenancy inside a process; a second
+  person runs their own instance with their own bot and data folder (ADR-017).
 - Two-tier LLM cost model: cheap model on every message, strong model once a week.
 - Runs identically on local Docker (dev) and a GCP VM (prod). One artifact.
 - Everything the model touches is reached through an abstraction, so providers
@@ -363,9 +364,10 @@ trigger differs.
 
 ## Configuration & secrets
 
-- All secrets via environment variables (`.env` in dev, never committed; real env
-  on the VM). Keys: `TELEGRAM_TOKEN`, `TELEGRAM_CHAT_ID`, LLM API keys, model
-  names per tier, `DATA_DIR`, schedule cron expression.
+- All secrets via environment variables (`.env` in dev, never committed). On the VM
+  `.env` holds shared defaults and each person's `.env.<name>` (named by `ENV_FILE`,
+  written by `make adduser`) overrides it; their Telegram keys must live there. Keys: `TELEGRAM_TOKEN`, `TELEGRAM_CHAT_ID`, LLM API keys, model names per
+  tier, `DATA_DIR` (set per instance by the systemd unit), schedule cron expression.
 - `config.py` loads and validates these once at startup and fails loudly if a
   required one is missing.
 

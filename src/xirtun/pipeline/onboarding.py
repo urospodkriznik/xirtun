@@ -19,7 +19,7 @@ _METRICS_NOTE = (
     "Fill the `metrics` object with sex, year of birth (and month if known), height "
     "in cm, weight in kg, and activity level (sedentary/light/moderate/active/"
     "very_active) for any of those you learn. If they tell you where they live, also "
-    "set `timezone` to the matching IANA tz database name (e.g. 'Europe/Ljubljana', "
+    "set `timezone` to the matching IANA tz database name (e.g. 'Europe/Berlin', "
     "'America/New_York') — pick the specific zone for their city/region, not just a "
     "country or abbreviation like 'CET'. Leave it unset if you aren't confident. Keep "
     "everything factual; do not invent details. Respond using the provided schema."

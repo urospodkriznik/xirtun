@@ -1191,7 +1191,7 @@ def test_structure_prompt_requires_scaling_by_stated_portions():
 
     assert "TOTAL amount eaten" in STRUCTURE_SYSTEM
     assert "Never collapse a stated multiple" in STRUCTURE_SYSTEM
-    assert "the beer is still one small glass" in STRUCTURE_SYSTEM   # scale only what's counted
+    assert "the juice is still one glass" in STRUCTURE_SYSTEM   # scale only what's counted
 
 
 def test_unnamed_saved_meal_is_not_expanded_into_the_diary(conn):

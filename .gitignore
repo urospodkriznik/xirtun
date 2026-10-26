@@ -1,4 +1,7 @@
 .env
+# One settings file per person on the VM (.env.uros, …) — see DEPLOY.md
+.env.*
+!.env.example
 data/
 .venv/
 __pycache__/

@@ -34,7 +34,7 @@ TOOLS_DOC = (
     "Tools (call exactly ONE per turn, via `tool` + `args_json`):\n"
     "- get_intake_summary(weeks:int=12) -> this week's per-day intake table, a "
     "week-over-week comparison across the whole window (avg kcal AND protein/fat/carbs/"
-    "sugar/fibre per logged day, with deltas), the working-target check, when each "
+    "sugar/fibre/sodium per logged day, with deltas), the working-target check, when each "
     "nutrient started being tracked, late-evening meals and what share of energy lands "
     "after 20:00 — all computed in SQL. USE THESE NUMBERS — never sum meal items yourself\n"
     "- get_food_frequency(days:int=90) -> how often each food appears (times, and on how "
@@ -316,7 +316,7 @@ def _symptom_patterns(ctx: ToolContext, args: dict[str, Any]) -> str:
     it. Computed here so the comparison is real; whether it MEANS anything is judgement."""
     symptom = str(args.get("symptom", "")).strip()
     if not symptom:
-        return "ERROR: name the symptom to compare (e.g. 'bloating')."
+        return "ERROR: name the symptom to compare (e.g. 'headache')."
     days = int(args.get("days", 90))
     since = (ctx.now - timedelta(days=days)).isoformat()
     c = diary.symptom_day_comparison(ctx.conn, symptom, since)

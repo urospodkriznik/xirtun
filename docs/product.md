@@ -7,7 +7,7 @@
 
 ## One-line description
 
-A personal nutritionist agent, used by a single person (the author), that logs
+A personal nutritionist agent, used by one person per instance, that logs
 meals and symptoms over Telegram, estimates approximate nutrition, and once a
 week proactively messages back patterns, risks, and suggestions it noticed.
 
@@ -28,9 +28,11 @@ as diagnosis.
 
 ## Who it is for
 
-One user: the author. Single-tenant. No accounts, no multi-user, no sharing.
-This assumption is load-bearing — it justifies skipping auth, per-user data
-isolation, rate limiting, and webhooks (see [decisions.md](decisions.md)).
+The author, and anyone else they add with `make adduser`. Each person runs their
+**own instance** — same code, their own bot, their own data — so every instance is
+single-user, with no accounts and no sharing between them. That per-instance assumption is load-bearing — it justifies skipping auth,
+in-process data isolation, rate limiting, and webhooks (see
+[decisions.md](decisions.md), ADR-017). A bot only answers its own person's chat.
 
 ## In scope — v1 (LOCKED)
 
@@ -62,7 +64,8 @@ isolation, rate limiting, and webhooks (see [decisions.md](decisions.md)).
 - Agent-planted follow-up questions on the hot path ("does this burger contain
   soy?" driven by `observations.md`).
 - Webhook transport (v1 uses long-polling).
-- Multi-user, accounts, auth.
+- Accounts, auth, and several people inside one instance (more people means more
+  instances — ADR-017).
 
 ## Non-goals / philosophy
 

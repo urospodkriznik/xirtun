@@ -5,8 +5,10 @@ and workouts in plain language — by text *or* voice — and xirtun estimates n
 remembers your profile, learns the foods you buy, and once a week proactively messages
 you with patterns, risks, and concrete suggestions it found in your own data.
 
-It's single-user and self-hosted: it runs on your own machine or a small VM, keeps all
-your data in plain files you own, and talks to no one but you and the model provider.
+It's self-hosted and single-user per instance: it runs on your own machine or a small
+VM, keeps all your data in plain files you own, and talks to no one but you and the
+model provider. Someone else who wants it too gets their own instance — the same code
+with their own bot and data folder (see [`DEPLOY.md`](DEPLOY.md)).
 
 > **Disclaimer:** xirtun is a personal, informational tool — not a medical device.
 > Its nutrition figures are rough estimates and its observations are not medical
@@ -24,7 +26,7 @@ your data in plain files you own, and talks to no one but you and the model prov
   Composite foods are broken into ingredients (a sandwich → bread, chicken, mayo,
   lettuce) and tagged with likely allergens/sensitivities (dairy, gluten, soy, egg,
   nuts, FODMAP, …).
-- **Symptoms** — *"I've been bloated since this morning"* → a structured, timestamped
+- **Symptoms** — *"I've had a headache since this morning"* → a structured, timestamped
   symptom with optional severity and duration.
 - **Exercise** — *"ran 5k this morning"* or *"45 min of legs at the gym"* → a
   structured activity with duration, intensity, distance, and an estimated calorie
@@ -46,8 +48,8 @@ your data in plain files you own, and talks to no one but you and the model prov
 **Your profile (`diet.md`, agent-managed)**
 - A first-run **interview** captures sex, year of birth, height, weight, activity
   level, allergies, conditions, family history, diet style, supplements, and goals.
-- Add to it anytime as a **note** — *"I want to gain muscle"*, *"I exercise twice a
-  week"*, *"I want more lutein"* — and the weekly review factors it in.
+- Add to it anytime as a **note** — *"I want to lose a little weight"*, *"I train twice a
+  week"*, *"I'm trying to eat less sugar"* — and the weekly review factors it in.
 - Update your **weight** (`/addweight`), log your **waist** (`/addwaist` — weight alone
   can't separate fat loss from muscle loss), or describe your **activity level** in plain words
   (`/setactivity I train hard 3 days and walk the rest`); targets recompute automatically.
@@ -55,9 +57,9 @@ your data in plain files you own, and talks to no one but you and the model prov
   rewrite (so nothing is silently lost).
 
 **Custom food database**
-- Save the exact label nutrition for foods you buy often: *"save Lidl vegan sausage:
-  200g package, per 100g — 214 kcal, 23g protein, 9g fat, 6g carbs, 4.6g fibre,
-  1.1g salt"*. EU labels state **salt**; it's converted to sodium automatically.
+- Save the exact label nutrition for foods you buy often: *"save Brand X granola:
+  500g package, per 100g — 450 kcal, 10g protein, 18g fat, 60g carbs, 7g fibre,
+  0.3g salt"*. EU labels state **salt**; it's converted to sodium automatically.
 - When you later log that food, its macros are computed **exactly** from the label
   (per-100g × grams, or a whole package) instead of being estimated.
 - Duplicate-aware: if a similar food already exists it asks **update / add / cancel**.
@@ -166,11 +168,11 @@ your data in plain files you own, and talks to no one but you and the model prov
 | `/addwaist <cm>` | Log a waist measurement — what the scale can't tell you |
 | `/setactivity <description>` | Update your activity level in plain language (recomputes targets) |
 | `/weekly` | Run the weekly review right now |
-| `/settimezone <IANA name>` | Set your timezone, e.g. `/settimezone Europe/Ljubljana` — takes effect immediately, no restart |
+| `/settimezone <IANA name>` | Set your timezone, e.g. `/settimezone Europe/Berlin` — takes effect immediately, no restart |
 | `/profile` | Show your profile and body metrics |
 | `/exportbackup` | Export everything as JSON — diary, metrics, targets, weights, weekly reviews, memory files |
 | `/exportdeepdive` | Export the last 90 days as a Markdown briefing to upload to a large model |
-| `/cleardata` | Erase all your data (asks to confirm) |
+| `/cleardata` | Permanently erase everything stored about you — every table, profile, notes — asks to confirm. Only your own data; deliberately left out of `/help` and the bot menu |
 | `/skip` | Skip a weekly-review calibration question |
 | `/help` | What I can do |
 
@@ -250,6 +252,24 @@ cron, and the weight reminder all use it. Change it any time with `/settimezone`
 Everything in `DATA_DIR` (`xirtun.db`, `diet.md`, `observations.md`, `diet.history/`)
 is created at runtime and is gitignored — never committed.
 
+The bot only answers `TELEGRAM_CHAT_ID`; messages from any other chat are dropped.
+
+**More than one person.** Each person gets their own bot, their own settings file and
+their own data folder, all running the same code. `.env` then holds the shared
+defaults (models, schedules, usually the Gemini key), and each person's `.env.<name>`
+holds their Telegram token and chat id plus anything they want different — a value
+there overrides `.env`. `make adduser` sets a person up interactively: it checks the
+name, walks through creating their bot with @BotFather, verifies the token, finds
+their chat id when they press Start, writes `.env.<name>`, and on the VM starts
+`xirtun@<name>`. Locally, run one person with:
+
+```bash
+ENV_FILE=.env.ana DATA_DIR=./data/ana uv run python -m xirtun.main
+```
+
+`make removeuser` is the reverse: it stops their bot and deletes `.env.<name>` and
+`data/<name>/`. See [`DEPLOY.md`](DEPLOY.md) for the VM side.
+
 ## Running
 
 ```bash
@@ -259,7 +279,7 @@ uv run python -m xirtun.run_reminder  # send the weight-log reminder now (if it'
 ```
 
 Shortcuts are also available via the `Makefile` (`make dev`, `make weekly`,
-`make check`); run `make` to list targets.
+`make check`, `make adduser`, `make removeuser`); run `make` to list targets.
 
 On first launch the bot interviews you to build your profile; after that, just talk to
 it.
@@ -309,6 +329,6 @@ throughout; no async and no web framework.
 
 ## Status
 
-A personal project, single-user by design. See [`docs/roadmap.md`](docs/roadmap.md)
-for what's planned next (e.g. photo input, deeper coaching, deploy automation).
+A personal project, single-user per instance by design (one instance per person). See
+[`docs/roadmap.md`](docs/roadmap.md) for what's planned next (e.g. photo input, deeper coaching, deploy automation).
 Licensed under [MIT](LICENSE).

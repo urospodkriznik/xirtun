@@ -1,8 +1,9 @@
 """Entry point. Wires config -> database -> Gemini -> Telegram and runs the bot.
 
 Run:  uv run python -m xirtun.main
-Needs TELEGRAM_TOKEN, TELEGRAM_CHAT_ID, GEMINI_API_KEY in .env. Timezone defaults to
-UTC and is set from the onboarding interview instead (stored in the DB).
+Needs TELEGRAM_TOKEN, TELEGRAM_CHAT_ID, GEMINI_API_KEY in .env (or in the file ENV_FILE
+names — one per person, ADR-017). Timezone defaults to UTC and is set from the
+onboarding interview instead (stored in the DB).
 
 Starts the weekly-review scheduler, then serves the Telegram bot. An overdue review
 fires at the next WEEKLY_CRON tick (today or tomorrow, whichever the cron trigger
@@ -63,7 +64,6 @@ COMMANDS = [
     ("exportdeepdive", "Download a write-up for a bigger model"),
     ("weekly", "Run your weekly review now"),
     ("profile", "Show your profile"),
-    ("cleardata", "Erase all your data"),
     ("settimezone", "Set your timezone"),
     ("help", "What I can do"),
 ]

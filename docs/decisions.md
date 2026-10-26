@@ -357,3 +357,69 @@ anything clinical is framed as what a blood test or a doctor settles.
 **Multi-user.** Nothing here is user-specific. The code asks what a given profile
 implies; the answer lives in that user's own database. A profile with no cardiac
 history simply never gets sodium on its list.
+
+---
+
+## ADR-017 — Multiple users as one instance per person · Accepted
+
+**Context.** More than one person wants to use the bot at the same time — the author
+plus whoever they add. Product.md had called single-tenancy load-bearing, and the roadmap
+priced multi-user as "a large change" needing auth and per-user isolation. But
+everything that belongs to a person already lives in one folder (`DATA_DIR`: the
+diary, `diet.md`, `observations.md`, the profile snapshots — even the timezone and the
+Telegram offset sit in that person's own database), and the bot token, chat id and
+folder all arrive through config. Options: one shared bot that routes each chat id to
+its own data folder, or one process per person running the same code.
+
+**Decision.** One instance per person. Each gets their own Telegram bot, their own
+settings file (`.env.<name>`) and their own data folder (`data/<name>/`), run as a
+systemd template unit (`xirtun@<name>`). The code stays the same and stays written
+for one person; nothing in it learns that other people exist. Three small guards
+make the separation real:
+
+- The Telegram transport drops any message not from its configured chat id. A bot's
+  username is public; before this, a stranger's message was logged into the diary and
+  answered in the owner's chat (replies always go to `TELEGRAM_CHAT_ID`).
+- `ENV_FILE` names the person's settings file. Settings are layered: the person's
+  file, then the shared `.env` beside it for whatever theirs leaves out (models,
+  schedules, usually the Gemini key), with the real environment above both. The
+  Telegram token and chat id are the exception — they must be in the person's own
+  file, or the instance refuses to start rather than answer with someone else's bot.
+- The unit sets `DATA_DIR` per instance itself, and a systemd value wins over the
+  file's, so two instances can never share a folder by a copy-paste slip.
+
+CD restarts every running instance (`systemctl restart 'xirtun@*'`), so adding a
+person never touches the workflow or the sudo rule. Adding one is `make adduser`: an
+interactive walk-through that validates the name, guides the @BotFather steps (the
+one part Telegram doesn't let a script do), verifies the token and that no one else
+uses it, finds the chat id by waiting for the person to press Start, writes
+`.env.<name>` and enables the unit. `make removeuser` is its mirror: it stops and
+disables the unit first, then deletes `.env.<name>` and `data/<name>/`, and lists what
+lies beyond its reach (the bot at BotFather, the chat, the journal). No registry of
+people is kept anywhere else — the
+`.env.<name>` files and the enabled units *are* the list, so there is nothing to drift
+out of sync.
+
+`/cleardata` became a real erase in the same change: every table (read from the
+schema, so a new table can't be missed), every kv entry but the Telegram offset, the
+memory files, then `VACUUM` and a WAL checkpoint so the rows are gone from disk, not
+just unlinked. It is per instance by construction, and kept out of `/help` and the
+command menu so it is used deliberately. What it cannot reach is said in its reply:
+the person's messages in their Telegram chat, and anything the model provider keeps.
+
+**Rationale.** Routing by chat id would have reached through the whole hot path:
+`Messenger.send` has no recipient, so every sender would change; the scheduler would
+need jobs per person in each one's timezone; the weekly and reminder runs would loop
+over people; and the connection and file paths would be chosen per message — all to
+save one process (~tens of MB on the VM). Separate processes give isolation for free
+instead of by care: one person's bad message, crash or `/cleardata` can't touch the
+other's data. The bot-per-person requirement isn't a choice: Telegram hands a bot's
+updates to one long-poll reader at a time.
+
+**Costs, accepted.** Saved foods and recurring meals aren't shared — each person
+builds their own list, even for groceries bought together. The Gemini key is shared,
+so the bill grows with each person. Restarts take every instance down for a moment,
+which ADR-006's restart policy already tolerates.
+
+**Supersedes** the single-user framing in product.md and architecture.md: each
+*instance* is still single-user, and that is now the line the code relies on.

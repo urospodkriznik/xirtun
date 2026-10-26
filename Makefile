@@ -3,18 +3,21 @@
 # `make` or `make help` lists everything.
 
 .DEFAULT_GOAL := help
-.PHONY: help dev weekly test lint check logs restart status stop start
+.PHONY: help dev weekly test lint check adduser removeuser logs restart status stop start
 
 help:  ## List available targets
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) \
 		| awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-10s\033[0m %s\n", $$1, $$2}'
 
-# --- local dev ---
-dev:  ## Run the bot (Telegram long-poll + weekly scheduler)
-	uv run python -m xirtun.main
+# One person's settings and data when WHO=<name> is given; otherwise the plain .env.
+PERSON = $(if $(filter-out *,$(WHO)),ENV_FILE=.env.$(WHO) DATA_DIR=data/$(WHO))
 
-weekly:  ## Run the weekly review once, now
-	uv run python -m xirtun.run_weekly
+# --- local dev ---
+dev:  ## Run the bot (Telegram long-poll + weekly scheduler); WHO=<name> for one person
+	$(PERSON) uv run python -m xirtun.main
+
+weekly:  ## Run the weekly review once, now; WHO=<name> on the VM
+	$(PERSON) uv run python -m xirtun.run_weekly
 
 test:  ## Run the test suite
 	uv run pytest
@@ -24,18 +27,29 @@ lint:  ## Lint with ruff
 
 check: lint test  ## Lint then test (what CI runs)
 
-# --- VM ops (run while SSH'd into the VM) ---
-logs:  ## Tail the service logs (journalctl)
-	sudo journalctl -u xirtun -f
+adduser:  ## Add a person: walks through their bot, chat id, settings and starts it
+	uv run python -m xirtun.adduser
 
-restart:  ## Restart the service
-	sudo systemctl restart xirtun
+removeuser:  ## Remove a person: stops their bot and deletes their settings and data
+	uv run python -m xirtun.removeuser
+
+# --- VM ops (run while SSH'd into the VM) ---
+# One service instance per person (xirtun@uros, ...). These act on all of them;
+# narrow to one with WHO, e.g. `make logs WHO=uros`.
+WHO ?= *
+UNIT = 'xirtun@$(WHO)'
+
+logs:  ## Tail the service logs (journalctl); WHO=<name> for one person
+	sudo journalctl -u $(UNIT) -f
+
+restart:  ## Restart the service(s)
+	sudo systemctl restart $(UNIT)
 
 status:  ## Show service status
-	sudo systemctl status xirtun
+	sudo systemctl status $(UNIT)
 
-stop:  ## Stop the service
-	sudo systemctl stop xirtun
+stop:  ## Stop the service(s)
+	sudo systemctl stop $(UNIT)
 
-start:  ## Start the service
-	sudo systemctl start xirtun
+start:  ## Start the service(s)
+	sudo systemctl start $(UNIT)

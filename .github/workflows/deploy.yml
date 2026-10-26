@@ -4,8 +4,8 @@ name: Deploy
 # Triggered by CI completing (not by push directly), so we never deploy a commit
 # that failed lint/tests. See DEPLOY.md for the VM-side prerequisites:
 #   - the repo checked out at ~/xirtun
-#   - the xirtun systemd unit installed
-#   - NOPASSWD sudo scoped to `systemctl restart xirtun`
+#   - the xirtun@.service template installed, one instance enabled per person
+#   - NOPASSWD sudo scoped to `systemctl restart xirtun@*`
 #   - secrets SSH_HOST / SSH_USER / SSH_KEY configured on the repo
 on:
   workflow_run:
@@ -25,11 +25,13 @@ jobs:
           host: ${{ secrets.SSH_HOST }}
           username: ${{ secrets.SSH_USER }}
           key: ${{ secrets.SSH_KEY }}
-          # .env stays on the VM and is never touched here. uv is called by
-          # absolute path because the SSH session's PATH omits ~/.local/bin.
+          # The .env.<name> files stay on the VM and are never touched here. uv is
+          # called by absolute path because the SSH session's PATH omits ~/.local/bin.
+          # The quoted pattern restarts every running instance (one per person), so
+          # adding someone never means editing this workflow.
           script: |
             set -euo pipefail
             cd ~/xirtun
             git pull --ff-only
             ~/.local/bin/uv sync --frozen
-            sudo systemctl restart xirtun
+            sudo systemctl restart 'xirtun@*'

@@ -114,7 +114,7 @@ class Metrics(BaseModel):
     weight_kg: float | None = None
     activity: Literal["sedentary", "light", "moderate", "active", "very_active"] | None = None
     activity_description: str | None = None  # what the user actually said; shown in /profile
-    timezone: str | None = None        # IANA name (e.g. "Europe/Ljubljana"), inferred from residence
+    timezone: str | None = None        # IANA name (e.g. "Europe/Berlin"), inferred from residence
 
 
 class ActivityClassification(BaseModel):

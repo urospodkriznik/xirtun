@@ -117,11 +117,12 @@ crib the exact workflow from there when implementing.
 
 **CD** (on push to `main`, after CI passes):
 - SSH into the VM and run a deploy script:
-  `git pull --ff-only` → `uv sync` → `sudo systemctl restart xirtun`.
+  `git pull --ff-only` → `uv sync` → `sudo systemctl restart 'xirtun@*'`.
 - Secrets in repo settings: `SSH_HOST`, `SSH_USER`, `SSH_KEY` (deploy key),
   optional `SSH_PORT`. Use e.g. `appleboy/ssh-action`.
-- VM prerequisites (from Slice 9): a repo checkout, the `xirtun` systemd unit, and a
-  deploy user with `NOPASSWD` sudo scoped to `systemctl restart xirtun`.
+- VM prerequisites (from Slice 9): a repo checkout, the `xirtun@.service` template
+  with one instance per person (ADR-017), and a deploy user with `NOPASSWD` sudo
+  scoped to `systemctl restart xirtun@*`.
 
 **Decisions to make then:**
 - Push-based SSH (lighter) vs a self-hosted runner on the VM (one more process to
@@ -135,7 +136,9 @@ crib the exact workflow from there when implementing.
 - **Webhook transport** (if real-time or scale ever matters).
 - **Live multi-provider switching** / fallback between LLM providers.
 - **Split scheduler to system cron** if process-coupling ever becomes a problem.
-- **Multi-user** (would require auth, per-user isolation — a large change).
+- ~~**Multi-user**~~ — done as one instance per person (ADR-017): same code, own bot,
+  own `.env.<name>`, own `data/<name>/`. Still open: sharing saved foods/meals
+  between people who shop together.
 
 ### Tracking depth
 - **Energy-balance accounting** — exercise sessions are now logged with an estimated

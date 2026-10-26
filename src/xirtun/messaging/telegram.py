@@ -164,6 +164,13 @@ class TelegramMessenger:
         message = update.get("message")
         if not message:
             return None
+        # A bot's username is public, so anyone can find it and write to it. Each
+        # instance serves exactly one person (ADR-017): drop anyone else before their
+        # words reach the diary — and before a voice note costs a transcription.
+        sender = str(message.get("chat", {}).get("id"))
+        if sender != self._chat_id:
+            logger.warning("ignoring message from unknown chat %s", sender)
+            return None
         if "text" in message:
             return parse_update(update)
 

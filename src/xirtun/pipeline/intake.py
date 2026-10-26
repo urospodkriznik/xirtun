@@ -39,6 +39,7 @@ from xirtun.pipeline.shopping import suggest_shopping
 from xirtun.pipeline.structure import structure_meal
 from xirtun.pipeline.symptom import structure_symptom
 from xirtun import deepdive, export, reports, targets
+from xirtun.config import DEFAULT_TIMEZONE
 from xirtun.storage import admin, custom_meals, db, diary, foods
 
 logger = logging.getLogger(__name__)
@@ -56,16 +57,16 @@ PENDING_CMD = "pending_cmd"
 INPUT_COMMANDS = {
     "/addmeal": "🍽️ What did you eat? e.g. '200g chicken and rice' — or /cancel.",
     "/addworkout": "🏋️ What workout did you do? e.g. '45 min run' — or /cancel.",
-    "/addsymptom": "🩺 How are you feeling? e.g. 'bloated since this morning' — or /cancel.",
-    "/addnote": "📝 What should I note? e.g. 'I want to gain muscle' — or /cancel.",
+    "/addsymptom": "🩺 How are you feeling? e.g. 'headache since this morning' — or /cancel.",
+    "/addnote": "📝 What should I note? e.g. 'I want to eat more vegetables' — or /cancel.",
     "/savefood": (
         "🏷️ Send a food and its per-100g label, e.g.\n"
-        "'Lidl vegan sausage: 250 kcal, 18g protein, 12g fat, 4g carbs'\n"
+        "'Brand X granola: 450 kcal, 10g protein, 18g fat, 60g carbs'\n"
         "— or /cancel."
     ),
     "/savemeal": (
         "🥣 Send a meal name and its ingredients, e.g.\n"
-        "'breakfast: 75g muesli, 250ml oat milk, 30g protein powder'\n"
+        "'breakfast: 60g oats, 200ml milk, 1 banana'\n"
         "— or /cancel."
     ),
     "/delfood": "🗑️ Which saved food should I remove? Send its name — or /cancel.",
@@ -98,7 +99,7 @@ def _match_input_command(text: str) -> tuple[str, str] | None:
 HELP_TEXT = (
     "Just tell me what you ate, how you feel, or what exercise you did, in plain "
     "language, and I'll log it. You can also share goals or notes (e.g. 'I want to "
-    "gain muscle') or save a food.\n\n"
+    "eat more vegetables') or save a food.\n\n"
     "Commands:\n"
     "/addmeal — start a new meal entry\n"
     "/addworkout — log a workout\n"
@@ -127,8 +128,7 @@ HELP_TEXT = (
     "/exportdeepdive — download a Markdown write-up to feed a bigger model\n"
     "/profile — show your profile and body metrics\n"
     "/weekly — run your weekly review now\n"
-    "/settimezone <IANA name> — set your timezone, e.g. /settimezone Europe/Ljubljana\n"
-    "/cleardata — erase everything (asks to confirm)\n"
+    "/settimezone <IANA name> — set your timezone, e.g. /settimezone Europe/Berlin\n"
     "/skip — skip a weekly-review question"
 )
 
@@ -843,8 +843,8 @@ def _process_food(
     food = parse_food(llm, text)
     if not food.get("name") or food.get("calories") is None:
         messenger.send(
-            "I couldn't read that food. Try e.g. 'save Lidl vegan sausage: per 100g — "
-            "250 kcal, 18g protein, 12g fat, 4g carbs'."
+            "I couldn't read that food. Try e.g. 'save Brand X granola: per 100g — "
+            "450 kcal, 10g protein, 18g fat, 60g carbs'."
         )
         return
 
@@ -1187,13 +1187,13 @@ def _process_timezone_command(
 ) -> None:
     tz_name = command[len("/settimezone"):].strip()
     if not tz_name:
-        messenger.send("Usage: /settimezone <IANA name>, e.g. /settimezone Europe/Ljubljana")
+        messenger.send("Usage: /settimezone <IANA name>, e.g. /settimezone Europe/Berlin")
         return
     try:
         db.set_timezone(conn, tz_name)
     except ZoneInfoNotFoundError:
         messenger.send(
-            f"Unknown timezone: {tz_name!r}. Use an IANA name, e.g. Europe/Ljubljana or America/New_York."
+            f"Unknown timezone: {tz_name!r}. Use an IANA name, e.g. Europe/Berlin or America/New_York."
         )
         return
     if on_timezone_change is not None:
@@ -1217,15 +1217,28 @@ def dispatch(
     """Top-level entry: run the first-run interview while diet.md is empty,
     otherwise hand off to the normal intake pipeline."""
     command = text.strip()
+    # Deliberately left out of /help and the command menu: a full erase is something to
+    # know about, not something to tap by accident. It only ever touches this
+    # instance's own database and folder — the person who sent it (ADR-017).
     if command == "/cleardata":
         messenger.send(
-            "⚠️ This erases ALL your data — meals, symptoms, profile, and my notes. "
+            "⚠️ This permanently erases EVERYTHING I have stored about you — meals, "
+            "symptoms, workouts, weight and waist logs, saved foods and meals, your "
+            "profile and body metrics, targets, weekly reviews, and my notes. It can't "
+            "be undone (use /exportbackup first if you want a copy). "
             "Send '/cleardata confirm' to proceed."
         )
         return
     if command == "/cleardata confirm":
         admin.reset_all(conn, diet_path.parent)
-        messenger.send("All data cleared. Send me anything to start fresh.")
+        # The stored timezone went with everything else; put the schedule back on the
+        # default until onboarding asks again.
+        if on_timezone_change is not None:
+            on_timezone_change(DEFAULT_TIMEZONE)
+        messenger.send(
+            "Everything is erased. Messages you sent stay in this Telegram chat — "
+            "delete the chat to remove those too. Send me anything to start fresh."
+        )
         return
     if command == "/weekly" and weekly_cb is not None:
         if weekly_qa.get(conn, chat_id, now=now) is not None:

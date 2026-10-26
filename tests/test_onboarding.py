@@ -218,6 +218,25 @@ def test_clear_data_confirm_wipes(conn, tmp_path):
     assert not diet.exists()
 
 
+def test_clear_data_resets_schedule_timezone(conn, tmp_path):
+    diet = tmp_path / "diet.md"
+    diet.write_text("# Profile")
+    seen = []
+
+    dispatch("/cleardata confirm", chat_id="c1", llm=FakeLLM(), conn=conn, messenger=FakeMessenger(),
+             diet_path=diet, on_timezone_change=seen.append)
+
+    assert [str(tz) for tz in seen] == ["UTC"]   # the stored timezone was erased with the rest
+
+
+def test_clear_data_is_not_advertised():
+    from xirtun.main import COMMANDS
+    from xirtun.pipeline.intake import HELP_TEXT
+
+    assert "cleardata" not in HELP_TEXT
+    assert all(name != "cleardata" for name, _ in COMMANDS)
+
+
 def test_weekly_command_invokes_callback(conn, tmp_path):
     diet = tmp_path / "diet.md"
     diet.write_text("# Profile")
