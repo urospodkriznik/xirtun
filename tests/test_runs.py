@@ -182,3 +182,114 @@ def test_incomplete_run_stores_no_report(conn, tmp_path):
     _review(conn, tmp_path, llm, now=now, force=True, manner="scheduled")
 
     assert weekly_reports.since(conn, "0000-01-01") == []
+
+
+# --- not asking the same thing every week ------------------------------------------
+
+WEEK = timedelta(days=7)
+
+
+def test_question_already_asked_last_week_is_dropped_and_report_sent_at_once(conn, tmp_path):
+    """The agent re-asked the same hunger question every week. A repeat is filtered in
+    code, and with nothing left a manual run has nothing to hold the report for."""
+    last = datetime(2026, 1, 1, 9, 0, tzinfo=TZ)
+    weekly_reports.save(conn, "old", manner="scheduled", questions=["Are you often hungry?"], now=last)
+    now = last + WEEK
+    messenger = FakeMessenger()
+    llm = _finishing_llm(final_message="This week.", questions=["Do you often feel hungry?"])
+
+    _review(conn, tmp_path, llm, now=now, force=True, messenger=messenger, manner="manual")
+
+    assert messenger.sent == ["This week."]
+    assert weekly_qa.get(conn, CHAT_ID, now=now) is None
+    assert weekly_reports.since(conn, "2026-01-05")[0]["questions"] == []
+
+
+def test_new_question_still_gets_through(conn, tmp_path):
+    last = datetime(2026, 1, 1, 9, 0, tzinfo=TZ)
+    weekly_reports.save(conn, "old", manner="scheduled", questions=["Are you often hungry?"], now=last)
+    now = last + WEEK
+    messenger = FakeMessenger()
+    llm = _finishing_llm(final_message="This week.", questions=["Did the knee injury heal?"])
+
+    _review(conn, tmp_path, llm, now=now, force=True, messenger=messenger, manner="scheduled")
+
+    assert weekly_qa.get(conn, CHAT_ID, now=now).questions == ["Did the knee injury heal?"]
+
+
+def test_drop_repeats_caps_at_two_and_dedupes_within_the_list(conn):
+    now = datetime(2026, 1, 8, 9, 0, tzinfo=TZ)
+    asked = weekly_reports.drop_repeats(conn, [
+        "How is your sleep lately?",
+        "How has your sleep been lately?",       # same question reworded
+        "Did your knee injury heal?",
+        "Any new supplements started?",
+        "Has your commute changed recently?",
+    ], now=now)
+    assert asked == ["How is your sleep lately?", "Did your knee injury heal?"]
+
+
+def test_question_older_than_the_window_may_be_asked_again(conn):
+    old = datetime(2026, 1, 1, 9, 0, tzinfo=TZ)
+    weekly_reports.save(conn, "old", manner="scheduled", questions=["Are you often hungry?"], now=old)
+    later = old + timedelta(days=weekly_reports.REPEAT_WINDOW_DAYS + 2)
+    assert weekly_reports.drop_repeats(conn, ["Are you often hungry?"], now=later) == [
+        "Are you often hungry?"
+    ]
+
+
+def test_answers_are_stored_with_the_questions_and_shown_to_the_agent(conn):
+    now = datetime(2026, 1, 8, 9, 0, tzinfo=TZ)
+    weekly_reports.save(conn, "r", manner="scheduled", questions=["Are you often hungry?"], now=now)
+    assert "unanswered" in weekly_reports.format_history(conn, now=now)
+
+    weekly_reports.record_answers(conn, ["No, I feel full most days"])
+
+    history = weekly_reports.format_history(conn, now=now)
+    assert "Are you often hungry?" in history and "feel full most days" in history
+    assert weekly_reports.format_history(conn, now=now + timedelta(weeks=20)).startswith("No questions")
+
+
+def test_finishing_a_qa_files_the_answers_on_the_report(conn, tmp_path):
+    from xirtun.pipeline.intake import handle_message
+
+    now = datetime(2026, 1, 8, 9, 0, tzinfo=TZ)
+    weekly_reports.save(conn, "r", manner="scheduled", questions=["Feeling hungry often?"], now=now)
+    weekly_qa.start(conn, CHAT_ID, mode="capture", questions=["Feeling hungry often?"], now=now)
+    weekly_qa.record_answer(conn, CHAT_ID, weekly_qa.get(conn, CHAT_ID, now=now), "not really", now=now)
+
+    handle_message("done", chat_id=CHAT_ID, llm=FakeLLM(), conn=conn, messenger=FakeMessenger(),
+                   observations_path=tmp_path / "o.md", now=now)
+
+    assert weekly_reports.since(conn, "2026-01-01")[0]["answers"] == ["not really"]
+
+
+def test_agent_can_call_get_past_questions(conn, tmp_path):
+    from xirtun.agent import tools
+
+    now = datetime(2026, 1, 8, 9, 0, tzinfo=TZ)
+    weekly_reports.save(conn, "r", manner="scheduled", questions=["Is the ankle better?"], now=now)
+    ctx = tools.ToolContext(conn=conn, diet_path=tmp_path / "d.md",
+                            observations_path=tmp_path / "o.md", now=now)
+    assert "Is the ankle better?" in tools.build_dispatch(ctx)["get_past_questions"]({})
+
+
+def test_old_database_gains_the_answers_column(tmp_path):
+    import sqlite3
+
+    from xirtun.storage import db
+
+    path = tmp_path / "old.db"
+    old = sqlite3.connect(path)
+    old.execute(
+        "CREATE TABLE weekly_reports (id INTEGER PRIMARY KEY, created_at TEXT NOT NULL, "
+        "manner TEXT NOT NULL, report TEXT NOT NULL, questions TEXT NOT NULL DEFAULT '[]')"
+    )
+    old.commit()
+    old.close()
+
+    db.init_db(path)
+
+    conn = db.get_connection(path)
+    cols = {row["name"] for row in conn.execute("PRAGMA table_info(weekly_reports)")}
+    assert "answers" in cols

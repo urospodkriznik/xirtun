@@ -99,7 +99,10 @@ with their own bot and data folder (see [`DEPLOY.md`](DEPLOY.md)).
   reasoning) instead of re-deriving the same adjustment in prose every week.
   - It only asks a calibrating question when the answer would actually change next
     week's analysis (e.g. resolving a logged-intake-vs-weight-trend conflict) — never a
-    generic check-in.
+    generic check-in, and zero questions is the normal week. It can see what it asked
+    before and what you replied, and the app itself drops any question that resembles
+    one from the last four weeks (answered or skipped) and caps the list at two, so
+    you aren't asked the same thing twice.
   - **`/weekly`** (you're at the keyboard): questions come *first* — the report is held
     until you answer or send `skip`/`done`. You can log a meal/symptom/etc. in between;
     it's processed normally and the open question resurfaces afterward.
@@ -190,7 +193,7 @@ Two loops, deliberately separated:
   wrong portion is visible immediately rather than months later in a total.
 - **Weekly review**: a ReAct-style **agent loop** that's given tools
   (`get_intake_summary`, `get_food_frequency`, `compare_symptom_days`, `query_diary`,
-  `get_weight_trend`, read/write `observations`, read/update the profile,
+  `get_weight_trend`, `get_past_questions`, read/write `observations`, read/update the profile,
   `get_targets`/`set_targets`) and autonomously decides which to call, what to conclude,
   and whether to message you at all. The scheduler only *triggers* it — the decisions
   live in the loop.

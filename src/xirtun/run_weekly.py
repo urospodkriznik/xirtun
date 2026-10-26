@@ -91,6 +91,10 @@ def run_weekly_review(
             tz=tz,
             now=now,
         )
+        # The prompt asks the agent not to repeat itself; this makes it so.
+        result = result._replace(
+            questions=weekly_reports.drop_repeats(conn, result.questions, now=now)
+        )
         if result.report:
             # Persist before delivery: a manual run holds its report back until the
             # Q&A is answered (and /skip may mean it is never sent at all), but the

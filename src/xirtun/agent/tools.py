@@ -19,7 +19,7 @@ from typing import Any, Callable
 from xirtun import targets, watchlist
 from xirtun.memory import diet as diet_memory
 from xirtun.memory import observations
-from xirtun.storage import diary
+from xirtun.storage import diary, weekly_reports
 
 
 @dataclass
@@ -44,6 +44,8 @@ TOOLS_DOC = (
     "without, compared on calories, evening calories, fibre and sugar, with the day count "
     "so you can judge whether the difference is worth anything\n"
     "- query_diary(since_days:int=28, kind:'all'|'meals'|'symptoms'|'exercises'='all') -> recent diary\n"
+    "- get_past_questions(weeks:int=6) -> the calibrating questions you asked in recent "
+    "reviews and the user's replies — call it BEFORE deciding whether to ask anything\n"
     "- read_diet() -> the user's profile (diet.md)\n"
     "- read_observations() -> your own prior notes (observations.md)\n"
     "- write_observations(content:str) -> replace your notes with an updated, concise summary\n"
@@ -379,6 +381,9 @@ def build_dispatch(ctx: ToolContext) -> dict[str, Callable[[dict[str, Any]], str
             targets.format_weight_trend(ctx.conn, now=ctx.now, days=int(a.get("days", 56)))
             + "\n"
             + targets.format_waist_trend(ctx.conn, now=ctx.now, days=int(a.get("days", 56)))
+        ),
+        "get_past_questions": lambda a: weekly_reports.format_history(
+            ctx.conn, now=ctx.now, weeks=int(a.get("weeks", 6))
         ),
         "get_watchlist": lambda a: watchlist.format_watchlist(ctx.conn, now=ctx.now),
         "set_watchlist": lambda a: watchlist.write(ctx.conn, a.get("items") or [], now=ctx.now),

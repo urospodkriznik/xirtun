@@ -40,7 +40,7 @@ from xirtun.pipeline.structure import structure_meal
 from xirtun.pipeline.symptom import structure_symptom
 from xirtun import deepdive, export, reports, targets
 from xirtun.config import DEFAULT_TIMEZONE
-from xirtun.storage import admin, custom_meals, db, diary, foods
+from xirtun.storage import admin, custom_meals, db, diary, foods, weekly_reports
 
 logger = logging.getLogger(__name__)
 
@@ -634,6 +634,7 @@ def _finalize_weekly_qa(
         messenger.send(qa.report)
     if observations_path is not None:
         observations.append(observations_path, weekly_qa.format_note(qa.questions, qa.answers))
+    weekly_reports.record_answers(conn, qa.answers)
     weekly_qa.clear(conn, chat_id)
 
 
