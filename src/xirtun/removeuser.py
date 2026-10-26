@@ -13,7 +13,6 @@ Like adduser, a terminal tool talking to the operator: print()/input(), not logg
 
 from __future__ import annotations
 
-import os
 import shutil
 import subprocess
 import sys
@@ -21,7 +20,7 @@ from pathlib import Path
 
 from dotenv import dotenv_values
 
-from xirtun.adduser import NAME_RE, ROOT, SYSTEMD_UNIT, get_bot_username
+from xirtun.adduser import NAME_RE, ROOT, SYSTEMD_UNIT, get_bot_username, require_checkout_owner
 
 
 # --- pure helpers ---
@@ -61,9 +60,7 @@ def unit_in_use(unit: str) -> bool:
 
 def main() -> None:
     print("Remove a person from xirtun — their bot stops and all their data is deleted.\n")
-    if ROOT.stat().st_uid != os.getuid():
-        print(f"✗ Run this as the user that owns {ROOT} (on the VM: sudo -iu xirtun).")
-        sys.exit(1)
+    require_checkout_owner()
 
     name = input("Name of the person to remove: ").strip().lower()
     if not NAME_RE.match(name):

@@ -44,6 +44,11 @@ sudo -iu xirtun                                     # become the deploy user
 
 The rest of the bootstrap runs **as the `xirtun` user** unless a command says `sudo`.
 
+A dedicated user is optional. You can just as well run everything as your own login
+user, with the repo in your home — what matters is that **one user** owns the
+checkout, runs the service, is `SSH_USER` for CD, and runs `make adduser`. Step 6
+installs the unit for whichever user that is.
+
 ## 3. Install prerequisites + uv
 
 ```bash
@@ -136,13 +141,21 @@ Back as a sudo-capable user (or with `sudo` from the `xirtun` shell), install th
 unit and the sudo rule once:
 
 ```bash
-sudo cp /home/xirtun/xirtun/deploy/xirtun@.service /etc/systemd/system/xirtun@.service
+RUN_AS=xirtun            # the user that owns the checkout (your login user, if you use that)
+cd /home/$RUN_AS/xirtun
+sed "s#/home/xirtun/#/home/$RUN_AS/#g; s#^User=xirtun#User=$RUN_AS#; s#^Group=xirtun#Group=$RUN_AS#" \
+  deploy/xirtun@.service | sudo tee /etc/systemd/system/xirtun@.service > /dev/null
 sudo systemctl daemon-reload
-echo 'xirtun ALL=(root) NOPASSWD: /usr/bin/systemctl restart xirtun@*, /usr/bin/systemctl enable --now xirtun@*, /usr/bin/systemctl disable --now xirtun@*' \
+echo "$RUN_AS ALL=(root) NOPASSWD: /usr/bin/systemctl restart xirtun@*, /usr/bin/systemctl enable --now xirtun@*, /usr/bin/systemctl disable --now xirtun@*" \
   | sudo tee /etc/sudoers.d/xirtun-deploy
 sudo chmod 0440 /etc/sudoers.d/xirtun-deploy
 sudo visudo -c                          # validate sudoers syntax
 ```
+
+The `sed` fills in your user and paths as it copies, so the repo's own copy of the unit
+is never edited. Keep it that way: **don't edit tracked files on the VM** — a local
+change makes every later `git pull` refuse to run, and CD with it. If a release ever
+changes `deploy/xirtun@.service`, rerun these lines; CD doesn't touch `/etc`.
 
 The unit is a systemd *template*: one file, and the part after `@` picks the person.
 `xirtun@uros` reads `.env.uros` (over the shared `.env`) and keeps its data in
@@ -150,7 +163,7 @@ The unit is a systemd *template*: one file, and the part after `@` picks the per
 
 ### Adding a person — `make adduser`
 
-As the `xirtun` user, from `~/xirtun`:
+As the user that owns the checkout (`xirtun` in this guide), from `~/xirtun`:
 
 ```bash
 make adduser
@@ -173,7 +186,7 @@ Their bot then answers the message they sent in step 3 with the onboarding inter
 
 ### Removing a person — `make removeuser`
 
-Also as the `xirtun` user. It asks for the name, lists exactly what it will delete,
+Also as the checkout's owner. It asks for the name, lists exactly what it will delete,
 and makes you type the name again. Then it stops and disables `xirtun@<name>` (first,
 so a running bot can't recreate files mid-delete) and deletes `.env.<name>` and
 `data/<name>/`. Nobody else's files are touched, and the shared `.env` stays.
@@ -268,12 +281,13 @@ mid-move:
 sudo systemctl disable --now xirtun
 ```
 
-**b) As the `xirtun` user** (`sudo -iu xirtun`) — so the moved files keep the owner
-the service runs as:
+**b) As the user that owns the checkout** (`sudo -iu xirtun` in this guide's layout;
+if the old service ran as your login user, just stay as yourself) — so the moved files
+keep the owner the service runs as:
 
 ```bash
 cd ~/xirtun
-git pull --ff-only && ~/.local/bin/uv sync
+git pull --ff-only && ~/.local/bin/uv sync   # if it refuses over deploy/xirtun.service, see below
 mv data data-uros && mkdir data && mv data-uros data/uros    # moves the -wal/-shm too
 grep '^TELEGRAM_' .env > .env.uros && chmod 600 .env.uros   # your bot -> your file
 sed -i '/^TELEGRAM_/d; /^DATA_DIR/d' .env && chmod 600 .env  # .env keeps the shared rest
@@ -281,18 +295,24 @@ cat .env.uros                     # expect exactly TELEGRAM_TOKEN=… and TELEGR
 exit
 ```
 
-**c) Back as your login user** — swap the unit and the sudo rule, start your instance:
+**c) Back as your login user** — remove the old unit, install the template and the
+sudo rule exactly as in step 6 (with `RUN_AS` set to the checkout's owner), then start
+your instance:
 
 ```bash
 sudo rm /etc/systemd/system/xirtun.service
-sudo cp /home/xirtun/xirtun/deploy/xirtun@.service /etc/systemd/system/xirtun@.service
-sudo systemctl daemon-reload
-echo 'xirtun ALL=(root) NOPASSWD: /usr/bin/systemctl restart xirtun@*, /usr/bin/systemctl enable --now xirtun@*, /usr/bin/systemctl disable --now xirtun@*' \
-  | sudo tee /etc/sudoers.d/xirtun-deploy
-sudo chmod 0440 /etc/sudoers.d/xirtun-deploy && sudo visudo -c
+# ...the step 6 block...
 sudo systemctl enable --now xirtun@uros
-sudo systemctl status xirtun@uros
+sudo journalctl -u xirtun@uros --no-pager | grep 'scheduler started'
 ```
+
+The last line should end in your own timezone, not `UTC` — proof the instance found
+the database you moved into `data/uros/`.
+
+If `git pull` refused because `deploy/xirtun.service` has local changes, that file was
+edited on the VM to fill in the user and paths. Check `git diff deploy/xirtun.service`
+shows only those, then discard it with `git checkout -- deploy/xirtun.service` and pull
+again — step 6's `sed` now does that job outside the repo.
 
 (`make adduser` isn't used for you: it refuses a name whose data folder already holds
 data, which is exactly the point here.) Send the bot a message: it should carry on

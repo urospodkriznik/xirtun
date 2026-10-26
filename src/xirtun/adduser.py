@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import getpass
 import os
+import pwd
 import re
 import subprocess
 import sys
@@ -134,6 +135,18 @@ def wait_for_chats(token: str, seconds: int = _WAIT_SECONDS) -> list[tuple[str, 
 
 # --- the walk-through ---
 
+def require_checkout_owner() -> None:
+    """Exit unless we run as the user owning the checkout — the user the service runs
+    as. A settings file written by anyone else (mode 600) would be unreadable to the
+    service, and the bot would fail to start; files deleted by anyone else might not
+    be theirs to delete."""
+    owner_uid = ROOT.stat().st_uid
+    if owner_uid != os.getuid():
+        owner = pwd.getpwuid(owner_uid).pw_name
+        print(f"✗ Run this as {owner}, the user that owns {ROOT} (e.g. sudo -iu {owner}).")
+        sys.exit(1)
+
+
 def _ask(prompt: str, *, secret: bool = False) -> str:
     return (getpass.getpass(prompt) if secret else input(prompt)).strip()
 
@@ -241,11 +254,7 @@ def _start(name: str) -> None:
 
 def main() -> None:
     print("Add a person to xirtun — each person gets their own bot, settings and data.\n")
-    # The service reads .env.<name> as the user owning the checkout; a file written by
-    # anyone else (mode 600) would be unreadable to it and the bot would fail to start.
-    if ROOT.stat().st_uid != os.getuid():
-        print(f"✗ Run this as the user that owns {ROOT} (on the VM: sudo -iu xirtun).")
-        sys.exit(1)
+    require_checkout_owner()
     shared = dotenv_values(ROOT / ".env") if (ROOT / ".env").exists() else {}
 
     name = _ask_name()
