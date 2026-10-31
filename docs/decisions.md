@@ -423,3 +423,26 @@ which ADR-006's restart policy already tolerates.
 
 **Supersedes** the single-user framing in product.md and architecture.md: each
 *instance* is still single-user, and that is now the line the code relies on.
+
+---
+
+## ADR-018 — A new person's first review waits for their first week · Accepted
+
+**Context.** The guard on the weekly review was "skip if a successful review ran in the
+last 7 days". With nothing on record that is "never skipped", so on a fresh database the
+first daily 17:00 tick reviewed whatever existed — one day of food, the evening after
+onboarding. The same blind spot made the morning weight reminder fire on day one. It
+went unnoticed because the author's database had run history long before a second
+person existed.
+
+**Decision.** The seven days are counted from the last successful review or, for
+someone never reviewed, from their first *logged* entry (`logged_at`, not `occurred_at`:
+a backdated meal must not make a new user look a week old). Nothing logged means nothing
+to review. `/weekly` (force) is untouched, so anyone can ask for an early look.
+
+**Alongside, two fixes found in the same first week of a second user.** The onboarding
+interview forgot its transcript after the 30-minute meal-session timeout, so a pause
+mid-interview restarted it; interviews now live 24 hours. And the late-meal nudge,
+written around the author's reflux, is now worded as general advice about lying down on
+a full stomach — it stays on for everyone, since the advice holds for anyone — and the
+weekly report's late-eating figure lost its "reflux window" label.

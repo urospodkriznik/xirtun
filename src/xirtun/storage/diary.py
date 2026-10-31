@@ -190,7 +190,7 @@ def weekly_totals(conn: sqlite3.Connection, now: datetime, *, weeks: int = 12) -
 
 def late_meal_days(conn: sqlite3.Connection, since_iso: str, *, hour: int = 20) -> list[str]:
     """Datetimes ('YYYY-MM-DD HH:MM') of meals eaten at/after `hour` o'clock,
-    on/after `since_iso` — the reflux-window check, computed not inferred."""
+    on/after `since_iso` — the late-eating check, computed not inferred."""
     rows = conn.execute(
         "SELECT occurred_at FROM meals "
         "WHERE occurred_at >= ? AND CAST(strftime('%H', occurred_at) AS INTEGER) >= ? "

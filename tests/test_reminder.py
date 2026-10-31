@@ -64,3 +64,15 @@ def test_silent_before_onboarding(conn, tmp_path):
 
     assert _remind(conn, tmp_path / "diet.md", messenger, now=now) is False
     assert messenger.sent == []
+
+
+def test_new_person_is_not_nudged_before_their_first_review_is_near(conn, tmp_path):
+    from xirtun.storage import diary
+
+    start = datetime(2026, 1, 1, 12, 0, tzinfo=TZ)
+    diary.save_meal(conn, "toast", {"occurred_at": None, "items": [{"name": "toast"}], "notes": None},
+                    now=start)
+    messenger = FakeMessenger()
+
+    assert _remind(conn, _onboarded(tmp_path), messenger, now=start + timedelta(days=1)) is False
+    assert _remind(conn, _onboarded(tmp_path), messenger, now=start + timedelta(days=6, hours=21)) is True

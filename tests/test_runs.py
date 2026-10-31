@@ -77,9 +77,48 @@ def test_force_runs_even_if_recent(conn, tmp_path):
     assert _review(conn, tmp_path, _finishing_llm(), now=now, force=True) is True
 
 
-def test_first_run_has_no_guard(conn, tmp_path):
+def _log_meal(conn, when):
+    from xirtun.storage import diary
+
+    diary.save_meal(conn, "toast", {"occurred_at": None, "items": [{"name": "toast"}], "notes": None},
+                    now=when)
+
+
+def test_first_review_waits_a_week_from_the_first_entry(conn, tmp_path):
+    """A new person has no review on record; that must not mean 'overdue' — the day
+    after onboarding there is one day of food to look at, not a week."""
+    start = datetime(2026, 1, 1, 12, 0, tzinfo=TZ)
+    _log_meal(conn, start)
+
+    day_two = start + timedelta(days=1, hours=5)
+    assert _review(conn, tmp_path, _finishing_llm(), now=day_two, force=False) is False
+
+    day_eight = start + timedelta(days=7, hours=1)
+    assert _review(conn, tmp_path, _finishing_llm(), now=day_eight, force=False) is True
+
+
+def test_first_review_counts_from_logging_time_not_backdated_meals(conn, tmp_path):
+    start = datetime(2026, 1, 8, 12, 0, tzinfo=TZ)
+    from xirtun.storage import diary
+
+    # "last week I had..." — occurred long ago, but logged just now.
+    diary.save_meal(conn, "old", {"occurred_at": "2025-12-20T12:00:00+00:00",
+                                  "items": [{"name": "toast"}], "notes": None}, now=start)
+
+    assert _review(conn, tmp_path, _finishing_llm(), now=start + timedelta(hours=5), force=False) is False
+
+
+def test_nothing_logged_means_nothing_to_review(conn, tmp_path):
     now = datetime(2026, 1, 8, 9, 0, tzinfo=TZ)
-    assert _review(conn, tmp_path, _finishing_llm(), now=now, force=False) is True
+    messenger = FakeMessenger()
+    assert _review(conn, tmp_path, _finishing_llm(), now=now, force=False, messenger=messenger) is False
+    assert messenger.sent == []
+
+
+def test_force_still_reviews_a_new_person(conn, tmp_path):
+    start = datetime(2026, 1, 1, 12, 0, tzinfo=TZ)
+    _log_meal(conn, start)
+    assert _review(conn, tmp_path, _finishing_llm(), now=start + timedelta(hours=5), force=True) is True
 
 
 def test_scheduled_run_sends_report_then_followup_questions(conn, tmp_path):
@@ -119,6 +158,7 @@ def test_incomplete_run_does_not_reset_guard_or_send_partial_report(conn, tmp_pa
     as 'ok'. Marking it ok would silently reset the 7-day guard with nothing ever
     sent, so the user gets nothing for another full week."""
     now = datetime(2026, 1, 8, 17, 0, tzinfo=TZ)
+    _log_meal(conn, now - timedelta(days=8))   # has been logging for over a week: due
     messenger = FakeMessenger()
     # Never finishes — every turn asks for a tool, so run_weekly exhausts max_iters.
     llm = FakeLLM([

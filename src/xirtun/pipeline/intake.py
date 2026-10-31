@@ -704,8 +704,8 @@ def _maybe_late_meal_nudge(
     now: datetime | None,
 ) -> None:
     """After a late-evening meal logged in (near) real time, nudge once per evening to
-    stay upright — reflux acts at the moment of eating, not in Sunday's retrospective.
-    Skipped for backdated/recap entries (logged well after eating), where 'stay upright
+    stay upright — the discomfort of a full stomach acts at the moment of eating, not
+    in Sunday's retrospective. Sent to everyone, worded as general advice. Skipped for backdated/recap entries (logged well after eating), where 'stay upright
     now' would be nonsense, for beverage-only entries (no full stomach), and deduped per
     evening so a dinner + late snack doesn't nag twice."""
     now = now or datetime.now().astimezone()
@@ -727,8 +727,9 @@ def _maybe_late_meal_nudge(
             return                                     # already nudged tonight
         db.kv_set(conn, _LATE_NUDGE_KEY, evening)
         messenger.send(
-            "🌙 Late meal — try to stay upright for the next 2–3 hours before lying "
-            "down; going horizontal on a full stomach is what triggers reflux."
+            "🌙 Late meal — it helps to stay upright for the next 2–3 hours before "
+            "lying down; going horizontal on a full stomach can cause discomfort and "
+            "acid reflux."
         )
         return
 

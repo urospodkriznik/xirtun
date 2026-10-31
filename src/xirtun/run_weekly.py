@@ -1,7 +1,8 @@
 """The weekly review: guarded orchestration around the agent loop, plus an entrypoint.
 
 ``run_weekly_review`` adds idempotency — it skips if a successful run happened within
-``MIN_INTERVAL``, unless ``force`` is set — and records every run in the ``runs``
+``MIN_INTERVAL`` (or, for someone never reviewed, if they started logging within it),
+unless ``force`` is set — and records every run in the ``runs``
 table. ``run_scheduled_review`` builds the production dependencies (its own database
 connection, the strong model, the Telegram messenger) and is what the scheduler, the
 ``/weekly`` command, the startup catch-up, and this module's CLI all call.
@@ -76,9 +77,12 @@ def run_weekly_review(
     now = now or datetime.now(tz)
 
     if not force:
-        last = runs.last_ok_at(conn)
-        if last is not None and now - last < min_interval:
-            logger.info("weekly review skipped — last ran %s", last.isoformat())
+        baseline = runs.review_baseline(conn)
+        if baseline is None:
+            logger.info("weekly review skipped — nothing logged yet")
+            return False
+        if now - baseline < min_interval:
+            logger.info("weekly review skipped — counting from %s", baseline.isoformat())
             return False
 
     run_id = runs.start(conn, now)

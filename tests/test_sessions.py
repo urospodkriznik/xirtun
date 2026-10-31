@@ -27,3 +27,14 @@ def test_clear(conn):
     sessions.upsert(conn, "c1", "meal", "x", now=T0)
     sessions.clear(conn, "c1")
     assert sessions.get_active(conn, "c1", now=T0) is None
+
+
+def test_onboarding_session_survives_a_long_pause(conn):
+    sessions.upsert(conn, "c1", "onboarding", "User: hi\nAssistant: sex?", now=T0)
+    assert sessions.get_active(conn, "c1", now=T0 + timedelta(hours=3)) is not None
+    assert sessions.get_active(conn, "c1", now=T0 + timedelta(hours=25)) is None
+
+
+def test_topup_session_survives_a_long_pause(conn):
+    sessions.upsert(conn, "c1", "onboarding_topup", "x", now=T0)
+    assert sessions.get_active(conn, "c1", now=T0 + timedelta(hours=3)) is not None

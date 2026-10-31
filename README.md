@@ -119,7 +119,7 @@ with their own bot and data folder (see [`DEPLOY.md`](DEPLOY.md)).
   logged a weight in the last 6 days, it nudges you to send `/addweight` so the review can
   judge your calories against the scale instead of just a formula.
 - **Late-meal nudge** — log a meal eaten after 20:00 in (near) real time and it replies
-  once per evening with a reminder to stay upright for 2–3 hours (reflux prevention at
+  once per evening with a reminder to stay upright for 2–3 hours before lying down (at
   the moment it matters, not in Sunday's retrospective). Backdated entries don't
   trigger it.
 - **Shopping-list assistant** — *"heading to the shop, what should I grab?"* →
@@ -244,7 +244,7 @@ cp .env.example .env   # then fill in the values
 | `GEMINI_API_KEY` | Google AI Studio API key |
 | `LLM_CHEAP_MODEL` | Hot-path model (default `gemini-2.5-flash-lite`; `gemini-2.5-flash` is more reliable for structured output and audio) |
 | `LLM_STRONG_MODEL` | Weekly-review model (default `gemini-2.5-pro`) |
-| `WEEKLY_CRON` | When to check for the weekly review (default `0 17 * * *`, daily at 17:00 — runs if 7 days have passed since the last review) |
+| `WEEKLY_CRON` | When to check for the weekly review (default `0 17 * * *`, daily at 17:00 — runs if 7 days have passed since the last review — or, for a new person, since their first logged entry) |
 | `WEIGHT_REMINDER_CRON` | When to check whether to nudge for a weight log (default `0 8 * * *`, daily at 08:00 — only nudges on the morning the review is due and if no weight was logged in 6 days; keep earlier than `WEEKLY_CRON`) |
 | `DATA_DIR` | Where the SQLite DB and Markdown files live (default `./data`) |
 

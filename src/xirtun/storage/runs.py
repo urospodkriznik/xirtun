@@ -35,3 +35,27 @@ def last_ok_at(conn: sqlite3.Connection) -> datetime | None:
         "SELECT MAX(started_at) AS t FROM runs WHERE kind = 'weekly' AND status = 'ok'"
     ).fetchone()
     return datetime.fromisoformat(row["t"]) if row and row["t"] else None
+
+
+def first_logged_at(conn: sqlite3.Connection) -> datetime | None:
+    """When the person first logged anything (a meal, symptom or workout), or None.
+
+    Uses `logged_at` — when they typed it in — not `occurred_at`, which the model may
+    place days earlier ("last Tuesday I had...") and would make a brand-new user look
+    like they've been here a week.
+    """
+    firsts = []
+    for table in ("meals", "symptoms", "exercises"):
+        row = conn.execute(f"SELECT MIN(logged_at) AS t FROM {table}").fetchone()  # fixed names
+        if row and row["t"]:
+            firsts.append(datetime.fromisoformat(row["t"]))
+    return min(firsts) if firsts else None
+
+
+def review_baseline(conn: sqlite3.Connection) -> datetime | None:
+    """The moment the next review's 7 days are counted from: the last successful
+    review, or — for someone who has never had one — their first logged entry. Without
+    that second rule a new person's database has no review on record, so the very first
+    daily tick would review a single day of food. None means there is nothing to review
+    yet (no review and nothing logged)."""
+    return last_ok_at(conn) or first_logged_at(conn)

@@ -18,6 +18,13 @@ from datetime import datetime, timedelta, timezone
 
 TIMEOUT = timedelta(minutes=30)
 
+# The onboarding interview is long and people step away in the middle of it — to look
+# up a number, to eat, overnight. Forgetting the transcript after 30 minutes made the
+# next answer restart the whole interview from scratch. A day is long enough to cover
+# any ordinary pause; a forgotten interview still can't swallow messages for longer.
+INTERVIEW_TIMEOUT = timedelta(hours=24)
+_KIND_TIMEOUTS = {"onboarding": INTERVIEW_TIMEOUT, "onboarding_topup": INTERVIEW_TIMEOUT}
+
 
 @dataclass
 class Session:
@@ -40,8 +47,12 @@ def peek_kind(conn: sqlite3.Connection, chat_id: str) -> str | None:
 
 
 def get_active(
-    conn: sqlite3.Connection, chat_id: str, *, now: datetime | None = None, timeout: timedelta = TIMEOUT,
+    conn: sqlite3.Connection, chat_id: str, *, now: datetime | None = None,
+    timeout: timedelta | None = None,
 ) -> Session | None:
+    """The live session, or None. `timeout` overrides how long it stays live; left
+    out, it depends on the session's kind (INTERVIEW_TIMEOUT for onboarding, TIMEOUT
+    for everything else)."""
     now = _now(now)
     row = conn.execute(
         "SELECT chat_id, kind, draft, updated_at FROM pending WHERE chat_id = ?",
@@ -51,6 +62,8 @@ def get_active(
         return None
 
     updated_at = datetime.fromisoformat(row["updated_at"])
+    if timeout is None:
+        timeout = _KIND_TIMEOUTS.get(row["kind"], TIMEOUT)
 
     # Expire stale sessions so a forgotten meal doesn't capture a later, unrelated
     # message: drop anything older than `timeout` and treat it as "no active session".

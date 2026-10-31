@@ -52,7 +52,7 @@ installs the unit for whichever user that is.
 ## 3. Install prerequisites + uv
 
 ```bash
-sudo apt-get update && sudo apt-get install -y git curl
+sudo apt-get update && sudo apt-get install -y git curl make
 curl -LsSf https://astral.sh/uv/install.sh | sh      # installs uv to ~/.local/bin
 source ~/.bashrc                                      # put uv on PATH for this shell
 uv --version

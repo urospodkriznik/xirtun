@@ -48,8 +48,8 @@ REMINDER_TEXT = (
 
 def _review_due_today(conn: sqlite3.Connection, now: datetime, min_interval: timedelta) -> bool:
     """True if the weekly review will become due before the end of today's window."""
-    last = runs.last_ok_at(conn)
-    return last is None or (now + _DUE_LOOKAHEAD) - last >= min_interval
+    baseline = runs.review_baseline(conn)   # same clock the review itself uses
+    return baseline is not None and (now + _DUE_LOOKAHEAD) - baseline >= min_interval
 
 
 def _weight_is_stale(conn: sqlite3.Connection, now: datetime, stale: timedelta) -> bool:

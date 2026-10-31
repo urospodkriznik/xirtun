@@ -310,3 +310,24 @@ def test_timezone_command_works_before_onboarding(tmp_path, conn):
 
     assert db.get_timezone(conn, "default") == ZoneInfo("Europe/Ljubljana")
     assert memory.is_empty(diet)  # onboarding wasn't touched
+
+
+def test_onboarding_resumes_after_a_long_pause(conn, tmp_path):
+    """A pause past the meal timeout must not make the interview start over: the
+    next answer is still added to the earlier transcript."""
+    from datetime import datetime, timedelta, timezone
+
+    diet = tmp_path / "diet.md"
+    t0 = datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc)
+    llm = FakeLLM([
+        LLMResponse(data={"done": False, "question": "How tall are you?"}),
+        LLMResponse(data={"done": False, "question": "Any allergies?"}),
+    ])
+    messenger = FakeMessenger()
+
+    dispatch("I'm female", chat_id="c1", llm=llm, conn=conn, messenger=messenger, diet_path=diet, now=t0)
+    dispatch("170cm", chat_id="c1", llm=llm, conn=conn, messenger=messenger, diet_path=diet,
+             now=t0 + timedelta(hours=2))
+
+    second_prompt = llm.calls[1]["messages"][1]["content"]
+    assert "I'm female" in second_prompt and "170cm" in second_prompt

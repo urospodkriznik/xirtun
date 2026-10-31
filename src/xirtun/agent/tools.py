@@ -224,7 +224,7 @@ def _intake_summary(ctx: ToolContext, args: dict[str, Any]) -> str:
 
     late = diary.late_meal_days(ctx.conn, since_week)
     lines.append(
-        "\nMeals eaten at/after 20:00 this week (reflux window): "
+        "\nMeals eaten at/after 20:00 this week: "
         + (", ".join(late) if late else "none")
     )
     share = diary.evening_calorie_share(ctx.conn, (ctx.now - timedelta(days=weeks * 7)).isoformat())
