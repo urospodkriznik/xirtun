@@ -107,7 +107,8 @@ CREATE TABLE IF NOT EXISTS weekly_reports (
     manner     TEXT NOT NULL,          -- "scheduled" | "manual"
     report     TEXT NOT NULL,
     questions  TEXT NOT NULL DEFAULT '[]',  -- JSON array of follow-up questions
-    answers    TEXT NOT NULL DEFAULT '[]'   -- JSON array of the user's replies
+    answers    TEXT NOT NULL DEFAULT '[]',  -- JSON array of the user's replies
+    findings   TEXT NOT NULL DEFAULT '[]'   -- JSON array of short finding labels
 );
 
 CREATE TABLE IF NOT EXISTS runs (
@@ -184,6 +185,10 @@ def _migrate(conn: sqlite3.Connection) -> None:
     report_cols = {row["name"] for row in conn.execute("PRAGMA table_info(weekly_reports)")}
     if "answers" not in report_cols:
         conn.execute("ALTER TABLE weekly_reports ADD COLUMN answers TEXT NOT NULL DEFAULT '[]'")
+    # What each report actually found, as short labels, so the agent can be told how
+    # many weeks running it has raised a thing instead of rediscovering it every week.
+    if "findings" not in report_cols:
+        conn.execute("ALTER TABLE weekly_reports ADD COLUMN findings TEXT NOT NULL DEFAULT '[]'")
 
     # Weekly Q&A moved out of `pending` into its own table — drop any stale row a
     # pre-migration version may have left in `pending` so it can't be misrouted.

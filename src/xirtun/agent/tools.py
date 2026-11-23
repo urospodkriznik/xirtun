@@ -46,6 +46,9 @@ TOOLS_DOC = (
     "- query_diary(since_days:int=28, kind:'all'|'meals'|'symptoms'|'exercises'='all') -> recent diary\n"
     "- get_past_questions(weeks:int=6) -> the calibrating questions you asked in recent "
     "reviews and the user's replies — call it BEFORE deciding whether to ask anything\n"
+    "- get_past_findings(weeks:int=12) -> what you have already told this user and how "
+    "many weeks running, so an unchanged finding is compressed rather than retold — call "
+    "it BEFORE writing the report\n"
     "- read_diet() -> the user's profile (diet.md)\n"
     "- read_observations() -> your own prior notes (observations.md)\n"
     "- write_observations(content:str) -> replace your notes with an updated, concise summary\n"
@@ -61,6 +64,11 @@ TOOLS_DOC = (
     "`why` must name the profile evidence behind it\n"
     "- mark_watchlist_reviewed(names:[str]) -> stamp the items you covered this week so "
     "the rotation moves on to the others next week\n"
+    "- settle_watchlist_item(name:str, evidence:str) -> take an item OUT of the rotation "
+    "because the diary shows it reliably covered; use this instead of reporting a concern "
+    "as fine for the third time\n"
+    "- reopen_watchlist_item(name:str, evidence:str) -> put a settled item back when the "
+    "habit behind it has lapsed\n"
 )
 
 
@@ -389,5 +397,14 @@ def build_dispatch(ctx: ToolContext) -> dict[str, Callable[[dict[str, Any]], str
         "set_watchlist": lambda a: watchlist.write(ctx.conn, a.get("items") or [], now=ctx.now),
         "mark_watchlist_reviewed": lambda a: watchlist.mark_reviewed(
             ctx.conn, a.get("names") or [], now=ctx.now
+        ),
+        "settle_watchlist_item": lambda a: watchlist.settle(
+            ctx.conn, a.get("name", ""), a.get("evidence", ""), now=ctx.now
+        ),
+        "reopen_watchlist_item": lambda a: watchlist.reopen(
+            ctx.conn, a.get("name", ""), a.get("evidence", ""), now=ctx.now
+        ),
+        "get_past_findings": lambda a: weekly_reports.format_finding_history(
+            ctx.conn, now=ctx.now, weeks=int(a.get("weeks", 12))
         ),
     }

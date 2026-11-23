@@ -333,3 +333,81 @@ def test_old_database_gains_the_answers_column(tmp_path):
     conn = db.get_connection(path)
     cols = {row["name"] for row in conn.execute("PRAGMA table_info(weekly_reports)")}
     assert "answers" in cols
+
+
+# --- the findings ledger: the agent's only way to know it is repeating itself ---
+
+def test_finding_history_counts_a_concern_across_rewordings(conn):
+    """Three reports said the same thing three different ways. Grouping by token
+    overlap — the matcher that already catches reworded questions — is what makes the
+    count reflect the concern rather than the phrasing."""
+    base = datetime(2026, 11, 22, 17, 0, tzinfo=TZ)
+    for weeks_ago, label in (
+        (3, "late-evening eating: 30% of energy after 20:00"),
+        (2, "late evening eating every night this week"),
+        (1, "energy eaten late in the evening, unchanged"),
+    ):
+        weekly_reports.save(
+            conn, "r", manner="scheduled", findings=[label],
+            now=base - timedelta(weeks=weeks_ago),
+        )
+
+    groups = weekly_reports.finding_history(conn, now=base)
+    assert len(groups) == 1                      # one concern, not three
+    assert groups[0]["count"] == 3
+
+    out = weekly_reports.format_finding_history(conn, now=base)
+    assert "raised 3x" in out
+    assert "STALE" in out
+    assert "ONE short line under 'Unchanged'" in out
+
+
+def test_finding_history_keeps_distinct_concerns_apart(conn):
+    base = datetime(2026, 11, 22, 17, 0, tzinfo=TZ)
+    weekly_reports.save(
+        conn, "r", manner="scheduled",
+        findings=["late-evening eating", "sodium spikes on processed days"], now=base,
+    )
+    groups = {g["label"]: g["count"] for g in weekly_reports.finding_history(conn, now=base)}
+    assert len(groups) == 2
+    assert all(count == 1 for count in groups.values())
+
+
+def test_a_new_finding_is_not_marked_stale(conn):
+    base = datetime(2026, 11, 22, 17, 0, tzinfo=TZ)
+    weekly_reports.save(conn, "r", manner="scheduled", findings=["waist expanding"], now=base)
+    out = weekly_reports.format_finding_history(conn, now=base)
+    assert "raised 1x" in out
+    assert "STALE" not in out
+
+
+def test_no_findings_yet_tells_the_agent_to_start_recording(conn):
+    out = weekly_reports.format_finding_history(conn, now=datetime(2026, 11, 22, tzinfo=TZ))
+    assert "No findings recorded" in out
+    assert "set `findings`" in out
+
+
+def test_findings_outside_the_window_are_not_counted(conn):
+    base = datetime(2026, 11, 22, 17, 0, tzinfo=TZ)
+    weekly_reports.save(
+        conn, "r", manner="scheduled", findings=["late-evening eating"],
+        now=base - timedelta(weeks=20),
+    )
+    assert weekly_reports.finding_history(conn, now=base, weeks=12) == []
+
+
+def test_findings_are_persisted_from_the_agents_result(conn, tmp_path):
+    """End to end: what the agent reports as findings must survive into the ledger,
+    or next week's count is blind and the repetition starts over."""
+    now = datetime(2026, 11, 22, 17, 0, tzinfo=TZ)
+    llm = FakeLLM([
+        LLMResponse(data={
+            "thought": "t", "tool": None, "args_json": "{}",
+            "final_message": "Your week in review.", "questions": [],
+            "findings": ["late-evening eating", "sodium spikes on processed days"],
+        }),
+    ])
+    _review(conn, tmp_path, llm, now=now, force=True)
+
+    stored = weekly_reports.since(conn, "0000-01-01")[-1]
+    assert stored["findings"] == ["late-evening eating", "sodium spikes on processed days"]

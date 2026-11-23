@@ -446,3 +446,53 @@ mid-interview restarted it; interviews now live 24 hours. And the late-meal nudg
 written around the author's reflux, is now worded as general advice about lying down on
 a full stomach — it stays on for everyone, since the advice holds for anyone — and the
 weekly report's late-eating figure lost its "reflux window" label.
+
+---
+
+## ADR-019 — A weekly report reports the delta, not the state · Accepted
+
+**Context.** Three consecutive reports were near-identical. "30% of energy after
+20:00", the mixed verdict on whole-food breakfasts versus processed evenings, swap the
+empanadas for tempeh, fibre is excellent, front-load your calories — each appeared
+every week, in every report, with the same explanation and the same action. None of it
+was *wrong*; the user genuinely does eat late and genuinely does eat processed evening
+food. It had simply stopped being information. Separately, nutrients the user had
+*solved* kept coming back: having started on iodised salt and fortified soy milk, they
+were still being told every few weeks that their calcium coverage was strong.
+
+Two causes. `due_items` rotated over the whole watchlist with no notion of a concern
+being settled, so a fixed one came round forever. And the report body had no history at
+all: the agent could not know it had raised late-eating eight weeks running, because
+nothing recorded that it had. The prompt did ask it to "re-test what you said last
+week" — the same kind of request that had already failed for questions (ADR in
+`1ce0631`: *"done in code because the prompt alone asks for this and the agent still
+re-asked the same pair every week"*).
+
+**Decision.** Settling, and a counted findings ledger.
+
+A watchlist item can be **settled** with the evidence that settled it, which takes it
+out of the rotation; it is not deleted, because a habit can lapse, so it returns once
+after `SETTLED_RECHECK_DAYS` to be confirmed and can be reopened immediately when the
+diary shows the habit has stopped. Open items always outrank a re-check. The same
+applies to a stated goal the user has evidently turned into a habit.
+
+Each report also records short **findings** labels, stored beside its questions.
+`format_finding_history` counts how many weeks running each has been raised, grouping
+rewordings with the same token-overlap test that catches reworded questions, and marks
+anything at three or more as stale. The prompt then has a rule with teeth behind it:
+new, changed and regressed material gets the detail; stale findings get one line under
+an `Unchanged` heading, with no mechanism, no repeated swaps and no re-issued action.
+
+**Rationale.** The counting has to live in code because it is the one part the agent
+cannot do: it has no memory of its own output beyond a summary it rewrites itself. Once
+the count is an input, "you have said this eight times" stops being something the prompt
+hopes for. Prose still cannot be mechanically rewritten the way a question list can, so
+this is enforcement of the *input* rather than the *output* — weaker than `drop_repeats`,
+and deliberately paired with an `Unchanged` section so the honest answer to "is this
+still true?" is available without a paragraph.
+
+**Limit on record.** Token overlap misses heavily reworded short labels ("calcium
+coverage strong" and "calcium covered via fortified soy milk" do not group, as
+`coverage` and `covered` share no stem). Settling is the stronger mechanism for
+anything genuinely solved, and is what that example should have used.
+

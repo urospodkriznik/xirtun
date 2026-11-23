@@ -82,3 +82,79 @@ def test_agent_tools_expose_the_watchlist(conn, tmp_path):
     dispatch["set_watchlist"]({"items": _items()})
     assert "iodine" in dispatch["get_watchlist"]({})
     assert "Marked reviewed" in dispatch["mark_watchlist_reviewed"]({"names": ["iodine"]})
+
+
+# --- settling: a solved concern must stop coming back ---
+
+def test_settled_item_leaves_the_rotation(conn):
+    """The reported bug: iodine and calcium kept rotating back and being confirmed
+    fine, week after week, because nothing could mark a concern solved."""
+    watchlist.write(conn, _items(), now=NOW)
+    watchlist.settle(conn, "iodine", "iodised salt in profile; used daily since Oct", now=NOW)
+
+    due = [i["name"] for i in watchlist.due_items(watchlist.items(conn), now=NOW)]
+    assert "iodine" not in due
+
+    formatted = watchlist.format_watchlist(conn, now=NOW)
+    assert "SETTLED" in formatted
+    assert "iodised salt in profile" in formatted      # the evidence is kept
+    assert "do NOT report on these again" in formatted
+
+
+def test_settled_item_returns_once_for_a_recheck(conn):
+    """Settling is not deleting — a habit can lapse, so it comes back to be confirmed
+    after SETTLED_RECHECK_DAYS and not before."""
+    watchlist.write(conn, _items(), now=NOW)
+    watchlist.settle(conn, "iodine", "iodised salt daily", now=NOW)
+    # Everything else settled too, so only a re-check could be due.
+    for name in ("sodium", "selenium"):
+        watchlist.settle(conn, name, "covered", now=NOW)
+
+    soon = NOW + timedelta(days=watchlist.SETTLED_RECHECK_DAYS - 1)
+    assert watchlist.due_items(watchlist.items(conn), now=soon) == []
+
+    later = NOW + timedelta(days=watchlist.SETTLED_RECHECK_DAYS + 1)
+    assert [i["name"] for i in watchlist.due_items(watchlist.items(conn), now=later)]
+
+
+def test_open_items_are_never_displaced_by_a_recheck(conn):
+    watchlist.write(conn, _items(), now=NOW)
+    watchlist.settle(conn, "iodine", "covered", now=NOW)
+    later = NOW + timedelta(days=watchlist.SETTLED_RECHECK_DAYS + 30)
+
+    due = [i["name"] for i in watchlist.due_items(watchlist.items(conn), count=2, now=later)]
+    assert "iodine" not in due          # two open items outrank the re-check
+    assert set(due) == {"sodium", "selenium"}
+
+
+def test_reopen_puts_a_lapsed_item_back(conn):
+    watchlist.write(
+        conn, _items() + [{"name": "calcium", "why": "vegan base; relies on fortified milk"}],
+        now=NOW,
+    )
+    watchlist.settle(conn, "calcium", "fortified soy milk 25 of 28 days", now=NOW)
+    assert "calcium" not in [i["name"] for i in watchlist.due_items(watchlist.items(conn), now=NOW)]
+
+    watchlist.reopen(conn, "calcium", "fortified soy milk absent for 3 weeks", now=NOW)
+    by_name = {i["name"]: i for i in watchlist.items(conn)}
+    assert by_name["calcium"]["status"] == "open"
+    assert by_name["calcium"]["settled_at"] is None
+
+
+def test_rederiving_preserves_settled_state(conn):
+    """A profile change must not resurrect concerns the user already solved."""
+    watchlist.write(conn, _items(), now=NOW)
+    watchlist.settle(conn, "iodine", "iodised salt daily", now=NOW)
+
+    watchlist.write(conn, _items() + [{"name": "vitamin d", "why": "indoors more"}], now=NOW)
+    by_name = {i["name"]: i for i in watchlist.items(conn)}
+    assert by_name["iodine"]["status"] == "settled"
+    assert by_name["iodine"]["settled_by"] == "iodised salt daily"
+    assert by_name["vitamin d"]["status"] == "open"
+
+
+def test_settle_requires_evidence_and_a_real_item(conn):
+    watchlist.write(conn, _items(), now=NOW)
+    assert "ERROR" in watchlist.settle(conn, "iodine", "   ", now=NOW)
+    assert "ERROR" in watchlist.settle(conn, "magnesium", "covered", now=NOW)
+    assert all(i.get("status", "open") == "open" for i in watchlist.items(conn))

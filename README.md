@@ -115,6 +115,17 @@ with their own bot and data folder (see [`DEPLOY.md`](DEPLOY.md)).
   take — and covers one or two items in depth each week on rotation, so it stays
   useful instead of reciting the same warnings. Anything clinical is framed as worth
   a blood test or a doctor's opinion, never a diagnosis.
+- **It stops repeating itself.** Two mechanisms, because a report that tells you the
+  same three things every week is one you stop reading:
+  - **Solved concerns settle.** Once the diary shows a watchlist item reliably covered
+    (or you say you've fixed it), it leaves the rotation with the evidence recorded —
+    no more weekly "your calcium coverage is strong". It isn't deleted: it returns once
+    after ~90 days to confirm it still holds, and reopens the moment the habit lapses.
+  - **Findings are counted.** Each report records short labels for what it found, and
+    the next one is told how many weeks running it has raised each — grouped so a
+    reworded repeat still counts. Anything unchanged for 3+ weeks is compressed to one
+    line under **Unchanged** instead of being re-explained with the same swaps and the
+    same action. The report spends itself on what's new, changed or regressed.
 - **Weight-log reminder** — on the morning your weekly review is due, if you haven't
   logged a weight in the last 6 days, it nudges you to send `/addweight` so the review can
   judge your calories against the scale instead of just a formula.

@@ -104,7 +104,8 @@ def run_weekly_review(
             # Q&A is answered (and /skip may mean it is never sent at all), but the
             # agent's analysis is worth keeping either way.
             weekly_reports.save(
-                conn, result.report, manner=manner, questions=result.questions, now=now,
+                conn, result.report, manner=manner, questions=result.questions,
+                findings=result.findings, now=now,
             )
             suspect = verify.unverified_calorie_figures(
                 result.report, tools.verified_values(conn, now)

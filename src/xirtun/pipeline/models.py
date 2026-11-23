@@ -172,3 +172,7 @@ class AgentAction(BaseModel):
     # Calibrating questions, set only when finishing — kept OUT of final_message so the
     # app can control send timing (hold for /weekly, follow up after a scheduled run).
     questions: list[str] = Field(default_factory=list)
+    # Short labels for what this report found ("late-evening eating", "sodium spikes
+    # on processed days"), set only when finishing. The app counts how many weeks
+    # running each has appeared so an unchanged finding can be compressed, not retold.
+    findings: list[str] = Field(default_factory=list)

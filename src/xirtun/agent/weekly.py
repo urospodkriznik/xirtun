@@ -39,7 +39,7 @@ WEEKLY_SYSTEM = (
     "eating-timing issues.\n"
     "\n"
     "GATHER FIRST — before writing, call the tools you need: read_observations, "
-    "read_diet, get_targets, get_weight_trend, get_watchlist, get_past_questions, get_intake_summary for the "
+    "read_diet, get_targets, get_weight_trend, get_watchlist, get_past_questions, get_past_findings, get_intake_summary for the "
     "week-over-week numbers, and query_diary for item-level detail (default 28 days; pull "
     "a longer window when judging trends). Don't report on data you haven't looked at. Every "
     "figure you quote about intake MUST come from a tool that computed it — "
@@ -62,6 +62,25 @@ WEEKLY_SYSTEM = (
     "nothing — the user acts on it. Your memory file also carries a block of numbers "
     "written by the app itself; where your prose disagrees with that block, the block is "
     "right and your prose needs correcting.\n"
+    "\n"
+    "REPORT THE DELTA, NOT THE STATE. A weekly report earns its place by what CHANGED. "
+    "get_past_findings tells you what you have already said and how many weeks running; "
+    "anything it marks STALE, the user has heard and does not need explained again. The "
+    "test for every paragraph: would someone who read last week's report learn anything "
+    "from this? If not, it belongs in one line under Unchanged, or nowhere.\n"
+    "  - NEW, CHANGED or REGRESSED material gets the detail. A stale finding gets at most "
+    "one short line — no re-explaining the mechanism, no repeating the same swap, and NOT "
+    "a re-issued action. Three weeks of 'shift calories earlier' that produced no shift "
+    "is not an action, it is wallpaper.\n"
+    "  - If a stale finding's action has plainly gone untaken for weeks, say so once and "
+    "plainly, and consider asking whether they want to work on it or want you to drop it "
+    "— that is more useful than issuing it a fourth time.\n"
+    "  - A concern the user has SOLVED must stop being reported. When the diary shows a "
+    "watchlist item reliably covered (the food or supplement behind it appears "
+    "consistently, or they told you they fixed it), call settle_watchlist_item instead of "
+    "confirming it is fine again. The same goes for a stated goal they have evidently "
+    "turned into a habit: confirm it once, then let it rest — add it to the watchlist as "
+    "settled so a lapse is still caught. Reopen anything whose habit stops.\n"
     "\n"
     "SAY HOW STRONG THE EVIDENCE IS. Every pattern claim carries its sample size and an "
     "honest label: how many days or events it rests on, and whether it is a demonstrated "
@@ -182,12 +201,25 @@ WEEKLY_SYSTEM = (
     "why it matters for THEM specifically (their diet pattern, condition, or family "
     "history), whether their logged foods cover it, and one concrete fix. This is the "
     "section for things they never asked about, so say plainly why it's here.\n"
-    "  • Watch-outs — gaps, risks, and any symptom↔food / symptom↔timing patterns.\n"
+    "  • Watch-outs — gaps, risks, and any symptom↔food / symptom↔timing patterns. NEW or "
+    "changed ones only; a risk you have already raised three times goes under Unchanged.\n"
+    "  • Unchanged — one line, or a few short bullets, for findings that are still true "
+    "but have not changed since you last reported them (\"late eating still ~30% of "
+    "energy; processed evening foods unchanged\"). No mechanism, no swaps, no actions. "
+    "Omit the section when everything is genuinely new. Its purpose is to let you stop "
+    "writing paragraphs about things the user already knows WITHOUT pretending they "
+    "stopped being true.\n"
     "  • Actions — 2-4 concrete, prioritised changes for next week.\n"
     "  • Blind spot — one thing you could NOT judge because it isn't tracked, and the "
     "single measurement that would settle it next time (a fresh weight, a waist "
     "measurement, logging a symptom daily rather than only when it's bad). Skip this "
     "section only if nothing was genuinely unanswerable.\n"
+    "FINDINGS (separate `findings` field, set whenever you finish): a short label for each "
+    "thing this report found — \"late-evening eating\", \"sodium spikes on processed days\", "
+    "\"fibre consistently high\". Labels, not sentences, and one per concern. The app "
+    "counts them across weeks so next week can tell you what the user has already heard; "
+    "leaving the field empty blinds that counting and the repetition starts over.\n"
+    "\n"
     "Do NOT include a 'Questions' section in final_message — put calibrating questions "
     "in the separate `questions` field instead (see below). Be comprehensive but not "
     "padded — every line should carry information. If the week is genuinely uneventful, "
@@ -239,6 +271,10 @@ class WeeklyResult(NamedTuple):
 
     report: str
     questions: list[str]
+    # Short labels for what this report found, counted across weeks so an unchanged
+    # finding can be compressed next time instead of retold in full. No default: a
+    # NamedTuple's default would be one list shared by every instance.
+    findings: list[str]
     incomplete: bool = False
 
 
@@ -270,7 +306,8 @@ def run_weekly(
         if not action.get("tool"):
             final = (action.get("final_message") or "").strip()
             questions = [q for q in (action.get("questions") or []) if q and q.strip()]
-            return WeeklyResult(report=final, questions=questions)
+            findings = [f for f in (action.get("findings") or []) if f and f.strip()]
+            return WeeklyResult(report=final, questions=questions, findings=findings)
         else:
             args = json.loads(action.get("args_json") or "{}")
             result = _run_tool(dispatch, action["tool"], args)
@@ -278,7 +315,7 @@ def run_weekly(
             continue
 
     logger.warning("weekly run hit max_iters (%d) without finishing", max_iters)
-    return WeeklyResult(report="", questions=[], incomplete=True)
+    return WeeklyResult(report="", questions=[], findings=[], incomplete=True)
 
 
 def _run_tool(dispatch, name: str, args: dict) -> str:

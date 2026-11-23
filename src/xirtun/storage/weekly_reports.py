@@ -25,13 +25,15 @@ def save(
     *,
     manner: str,
     questions: list[str] | None = None,
+    findings: list[str] | None = None,
     now: datetime | None = None,
 ) -> int:
     """Store one weekly report. Returns its new id."""
     now = now or datetime.now().astimezone()
     cursor = conn.execute(
-        "INSERT INTO weekly_reports (created_at, manner, report, questions) VALUES (?, ?, ?, ?)",
-        (now.isoformat(), manner, report, json.dumps(questions or [])),
+        "INSERT INTO weekly_reports (created_at, manner, report, questions, findings) "
+        "VALUES (?, ?, ?, ?, ?)",
+        (now.isoformat(), manner, report, json.dumps(questions or []), json.dumps(findings or [])),
     )
     conn.commit()
     return cursor.lastrowid
@@ -41,6 +43,7 @@ def _row(row: sqlite3.Row) -> dict[str, Any]:
     report = dict(row)
     report["questions"] = json.loads(report["questions"]) if report.get("questions") else []
     report["answers"] = json.loads(report["answers"]) if report.get("answers") else []
+    report["findings"] = json.loads(report["findings"]) if report.get("findings") else []
     return report
 
 
@@ -60,7 +63,7 @@ def record_answers(conn: sqlite3.Connection, answers: list[str]) -> None:
 def since(conn: sqlite3.Connection, since_iso: str) -> list[dict[str, Any]]:
     """Reports written on/after `since_iso`, oldest first."""
     rows = conn.execute(
-        "SELECT created_at, manner, report, questions, answers FROM weekly_reports "
+        "SELECT created_at, manner, report, questions, answers, findings FROM weekly_reports "
         "WHERE created_at >= ? ORDER BY created_at",
         (since_iso,),
     ).fetchall()
@@ -82,7 +85,11 @@ REPEAT_WINDOW_DAYS = 28
 
 
 def _tokens(text: str) -> set[str]:
-    return {word.strip("?.,!:;'\"()").rstrip("s") for word in text.lower().split() if len(word) >= 4}
+    """Significant words, normalised enough that a reworded sentence still matches.
+    Hyphens and slashes split like spaces, so "late-evening eating" and "late evening
+    eating" produce the same tokens rather than reading as unrelated phrases."""
+    flattened = text.lower().replace("-", " ").replace("/", " ")
+    return {w.strip("?.,!:;'\"()").rstrip("s") for w in flattened.split() if len(w) >= 4}
 
 
 def _is_repeat(question: str, earlier: list[str]) -> bool:
@@ -129,4 +136,72 @@ def format_history(conn: sqlite3.Connection, *, now: datetime, weeks: int = 6) -
             "    Reply: " + " / ".join(r["answers"]) if r["answers"]
             else "    Reply: (none — skipped or unanswered)"
         )
+    return "\n".join(lines)
+
+
+# A finding seen this many weeks running, unchanged, has stopped being news.
+STALE_AFTER_WEEKS = 3
+# How far back to look when counting how often a finding has been raised.
+FINDING_WINDOW_WEEKS = 12
+
+
+def finding_history(
+    conn: sqlite3.Connection, *, now: datetime, weeks: int = FINDING_WINDOW_WEEKS,
+) -> list[dict[str, Any]]:
+    """How often each past finding has been raised, newest label first.
+
+    Findings are free text, so the same concern comes back slightly reworded every week
+    ("30% of energy after 20:00", "late-evening eating every night"). They are grouped
+    by the same token-overlap test that catches reworded questions, so the count
+    reflects the concern rather than the phrasing. Returned per group: the most recent
+    label, how many reports raised it, and when it was first and last raised.
+    """
+    reports = since(conn, (now - timedelta(weeks=weeks)).isoformat())
+    groups: list[dict[str, Any]] = []
+    for report in reports:
+        for label in report["findings"]:
+            match = next((g for g in groups if _is_repeat(label, g["labels"])), None)
+            if match is None:
+                groups.append({
+                    "label": label, "labels": [label], "count": 1,
+                    "first": report["created_at"][:10], "last": report["created_at"][:10],
+                })
+            else:
+                match["labels"].append(label)
+                match.update(label=label, count=match["count"] + 1, last=report["created_at"][:10])
+    groups.sort(key=lambda g: (-g["count"], g["label"]))
+    return groups
+
+
+def format_finding_history(
+    conn: sqlite3.Connection, *, now: datetime, weeks: int = FINDING_WINDOW_WEEKS,
+) -> str:
+    """What the agent has already told this user, and how many times.
+
+    Exists because the agent had no way to know: every week it rediscovered late-night
+    eating and processed evening food and wrote them up afresh, which is accurate and
+    useless. Counting is done here rather than asked for in the prompt for the same
+    reason question de-duplication is (see drop_repeats).
+    """
+    groups = finding_history(conn, now=now, weeks=weeks)
+    if not groups:
+        return (
+            f"No findings recorded in the last {weeks} weeks — nothing of yours is on "
+            "record as already said, so write the report normally. Do set `findings` "
+            "when you finish so next week knows what you covered."
+        )
+
+    lines = [f"What you have already told this user (last {weeks} weeks):"]
+    for g in groups:
+        span = g["first"] if g["first"] == g["last"] else f"{g['first']} → {g['last']}"
+        tag = " — STALE, they have heard this" if g["count"] >= STALE_AFTER_WEEKS else ""
+        lines.append(f"- \"{g['label']}\" — raised {g['count']}x ({span}){tag}")
+    lines.append(
+        f"A finding raised {STALE_AFTER_WEEKS}x or more is not news. If it is unchanged, "
+        "give it ONE short line under 'Unchanged' — do not re-explain the mechanism, do "
+        "not repeat the same swaps, and do not re-issue it as an action. Spend the report "
+        "on what is NEW, has CHANGED, or has REGRESSED. If a stale finding has an action "
+        "the user has plainly not taken for weeks, stop re-issuing it and consider asking "
+        "once whether they want to work on it or want you to drop it."
+    )
     return "\n".join(lines)

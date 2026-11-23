@@ -13,6 +13,12 @@ moment it's sent. Persisting also enables ROTATION — `due_items` names the lea
 recently covered entries so each report goes deep on one or two instead of reciting the
 whole list every week, which is what turns this kind of feature into ignorable noise.
 
+Items also SETTLE. Rotation alone still brought a solved concern back round forever: a
+user who started using iodised salt and fortified soy milk kept being told, every few
+weeks, that their calcium coverage was strong. A settled item leaves the rotation but is
+not deleted — a habit can lapse — so it comes back once after SETTLED_RECHECK_DAYS purely
+to confirm it still holds, and can be reopened the moment the diary says otherwise.
+
 Nothing here is user-specific: the code is generic, and each user's watchlist lives in
 their own database, derived from their own profile.
 """
@@ -32,6 +38,8 @@ _KEY = "nutrition_watchlist"
 MAX_ITEMS = 12
 # How many items to review in depth per weekly report.
 DUE_COUNT = 2
+# How long a settled item stays out of the rotation before one confirming re-check.
+SETTLED_RECHECK_DAYS = 90
 
 
 def read(conn: sqlite3.Connection) -> dict[str, Any]:
@@ -50,9 +58,10 @@ def write(
     now: datetime | None = None,
 ) -> str:
     """Replace the watchlist. Each item needs a `name` and a `why` naming the profile
-    evidence behind it. Existing items KEEP their last_reviewed date, so re-deriving the
-    list doesn't reset the rotation and make everything look due again."""
-    previous = {i["name"].strip().lower(): i.get("last_reviewed") for i in items(conn)}
+    evidence behind it. Existing items KEEP their last_reviewed date AND their settled
+    state, so re-deriving the list neither resets the rotation nor resurrects concerns
+    the user has already solved."""
+    previous = {i["name"].strip().lower(): i for i in items(conn)}
 
     cleaned: list[dict[str, Any]] = []
     for item in new_items[:MAX_ITEMS]:
@@ -60,10 +69,14 @@ def write(
         why = str(item.get("why", "")).strip()
         if not name or not why:
             continue
+        prior = previous.get(name.lower(), {})
         cleaned.append({
             "name": name,
             "why": why,
-            "last_reviewed": previous.get(name.lower()),
+            "last_reviewed": prior.get("last_reviewed"),
+            "status": prior.get("status", "open"),
+            "settled_at": prior.get("settled_at"),
+            "settled_by": prior.get("settled_by"),
         })
 
     if not cleaned:
@@ -98,15 +111,81 @@ def mark_reviewed(
     return "Marked reviewed: " + ", ".join(marked)
 
 
+def _set_status(
+    conn: sqlite3.Connection, name: str, status: str, evidence: str, now: datetime | None,
+) -> str:
+    """Shared body of settle/reopen: both just move one item between states and record
+    the evidence for the move, so a later reader can see why it stopped (or resumed)
+    being reported on."""
+    data = read(conn)
+    current = data.get("items", [])
+    if not current:
+        return "ERROR: no watchlist yet — save one with set_watchlist first."
+    if not evidence.strip():
+        return "ERROR: evidence is required — say what the diary shows."
+
+    now = now or datetime.now().astimezone()
+    for item in current:
+        if item["name"].strip().lower() == name.strip().lower():
+            item["status"] = status
+            item["settled_at"] = now.isoformat() if status == "settled" else None
+            item["settled_by"] = evidence.strip()
+            data["items"] = current
+            db.kv_set(conn, _KEY, json.dumps(data))
+            verb = "settled" if status == "settled" else "reopened"
+            return f"'{item['name']}' {verb}: {evidence.strip()}"
+    return f"ERROR: '{name}' is not on the watchlist."
+
+
+def settle(
+    conn: sqlite3.Connection, name: str, evidence: str, *, now: datetime | None = None,
+) -> str:
+    """Take an item out of the weekly rotation because the diary shows it covered.
+    Not a delete: it returns once after SETTLED_RECHECK_DAYS to confirm it still holds."""
+    return _set_status(conn, name, "settled", evidence, now)
+
+
+def reopen(
+    conn: sqlite3.Connection, name: str, evidence: str, *, now: datetime | None = None,
+) -> str:
+    """Put a settled item back in the rotation because the habit behind it has lapsed."""
+    return _set_status(conn, name, "open", evidence, now)
+
+
+def _is_open(item: dict[str, Any]) -> bool:
+    return item.get("status", "open") != "settled"
+
+
+def _recheck_due(item: dict[str, Any], now: datetime) -> bool:
+    """A settled item whose confirming re-check has come round."""
+    settled_at = item.get("settled_at")
+    if not settled_at:
+        return True          # settled with no date: treat as due rather than lose it
+    return (now.date() - datetime.fromisoformat(settled_at).date()).days >= SETTLED_RECHECK_DAYS
+
+
 def _sort_key(item: dict[str, Any]) -> tuple[int, str]:
     # Never-reviewed items come first; then the oldest review date.
     last = item.get("last_reviewed")
     return (1, last) if last else (0, "")
 
 
-def due_items(current: list[dict[str, Any]], count: int = DUE_COUNT) -> list[dict[str, Any]]:
-    """The least recently covered items — what this week's report should go deep on."""
-    return sorted(current, key=_sort_key)[:count]
+def due_items(
+    current: list[dict[str, Any]], count: int = DUE_COUNT, *, now: datetime | None = None,
+) -> list[dict[str, Any]]:
+    """What this week's report should go deep on: the least recently covered OPEN items.
+
+    Settled items are skipped entirely until their re-check comes round, which is the
+    whole point — a solved concern that keeps rotating back is the noise that makes the
+    user stop reading. Open items always come first, so a re-check never displaces a
+    live concern.
+    """
+    now = now or datetime.now().astimezone()
+    openish = sorted((i for i in current if _is_open(i)), key=_sort_key)
+    rechecks = sorted(
+        (i for i in current if not _is_open(i) and _recheck_due(i, now)), key=_sort_key
+    )
+    return (openish + rechecks)[:count]
 
 
 def _age(last_reviewed: str | None, now: datetime) -> str:
@@ -132,12 +211,35 @@ def format_watchlist(conn: sqlite3.Connection, now: datetime | None = None) -> s
     lines = [f"Nutrition watchlist (derived {read(conn).get('derived_at', '')[:10]}, from the "
              "user's profile — NOT their stated goals):"]
     for item in current:
-        lines.append(f"- {item['name']} — {item['why']} ({_age(item.get('last_reviewed'), now)})")
+        if _is_open(item):
+            lines.append(f"- {item['name']} — {item['why']} ({_age(item.get('last_reviewed'), now)})")
 
-    due = due_items(current)
+    settled = [i for i in current if not _is_open(i)]
+    if settled:
+        lines.append(
+            "SETTLED — out of the rotation, do NOT report on these again unless the diary "
+            "shows the habit has lapsed (then call reopen_watchlist_item):"
+        )
+        for item in settled:
+            when = (item.get("settled_at") or "")[:10]
+            lines.append(f"- {item['name']} — settled {when}: {item.get('settled_by') or '(no note)'}")
+
+    due = due_items(current, now=now)
+    if due:
+        lines.append(
+            "DUE for in-depth review this week: " + ", ".join(i["name"] for i in due) + ". "
+            "Cover those in depth; mention the others only if this week's diary shows "
+            "something notable about them. Call mark_watchlist_reviewed once you have."
+        )
+    else:
+        lines.append(
+            "Nothing is due this week — every item is either freshly reviewed or settled. "
+            "Write no 'Beyond your goals' section at all rather than padding it."
+        )
     lines.append(
-        "DUE for in-depth review this week: " + ", ".join(i["name"] for i in due) + ". "
-        "Cover those in depth; mention the others only if this week's diary shows "
-        "something notable about them. Call mark_watchlist_reviewed once you have."
+        "If a due item's evidence shows it is now reliably covered (the food or supplement "
+        "behind it appears consistently, or the user has told you they fixed it), call "
+        "settle_watchlist_item instead of reporting it as fine again — a concern confirmed "
+        "healthy week after week is noise, and settling is how it stops."
     )
     return "\n".join(lines)
